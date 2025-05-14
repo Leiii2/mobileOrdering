@@ -1,29 +1,48 @@
 {
   "expo": {
-    "name": "mobilePOS",
-    "slug": "mobilePOS",
+    "name": "Alicias",
+    "slug": "Alicias",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "This app uses the camera to scan QR codes for adding items to the POS cart."
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "package": "com.alicias.batchoy",
+      "config": {
+        "networkSecurityConfig": "./android-config/network_security_config.xml"
+      },
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
-      "favicon": "./assets/favicon.png"
-    }
+      "favicon": "./assets/icon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "88b7e4f0-44d9-4f8c-8ce4-876b77229dce"
+      }
+    },
+    "owner": "leo771",
+    "plugins": [
+      "expo-barcode-scanner",
+      "react-native-vision-camera"
+    ]
   }
 }
