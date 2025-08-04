@@ -1,48 +1,51 @@
 {
   "expo": {
-    "name": "Alicias",
-    "slug": "Alicias",
+    "name": "mobilepos",
+    "slug": "mobilepos",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "splash": {
-      "image": "./assets/icon.png",
+      "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
-      "supportsTablet": true,
-      "infoPlist": {
-        "NSCameraUsageDescription": "This app uses the camera to scan QR codes for adding items to the POS cart."
-      }
+      "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.png",
-        "backgroundColor": "#ffffff"
-      },
-      "package": "com.alicias.batchoy",
-      "config": {
-        "networkSecurityConfig": "./android-config/network_security_config.xml"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
       },
       "permissions": [
-        "android.permission.CAMERA"
-      ]
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.alicias.mobilePOS"
     },
     "web": {
-      "favicon": "./assets/icon.png"
+      "favicon": "./assets/favicon.png"
     },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera."
+        }
+      ],
+      "expo-barcode-scanner"
+    ],
     "extra": {
       "eas": {
-        "projectId": "88b7e4f0-44d9-4f8c-8ce4-876b77229dce"
+        "projectId": "68dbd95e-9b34-460c-b628-63b399669c60"
       }
-    },
-    "owner": "leo771",
-    "plugins": [
-      "expo-barcode-scanner",
-      "react-native-vision-camera"
-    ]
+    }
   }
 }

@@ -4,8 +4,7 @@ export default StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#FFF",
-    marginHorizontal: 10,
-    marginTop: 15, // Added top margin
+    marginTop: 40, // Added top margin
     marginBottom: 20,
   },
   header: {

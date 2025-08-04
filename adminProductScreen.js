@@ -1,40 +1,48 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   FlatList,
   TextInput,
   Image,
   Platform,
   Modal,
+  SafeAreaView,
+  Alert, // Added for error alerts
 } from "react-native";
 import { Picker } from "@react-native-picker/picker";
-import * as ImagePicker from "expo-image-picker";
-import * as ImageManipulator from "expo-image-manipulator";
+import { Ionicons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
 import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useNavigation } from "@react-navigation/native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getAPIUrl } from "./config";
 import styles from "./css/adminProductScreen.styles";
 
-const AdminProductScreen = ({ route, navigation }) => {
+const AdminProductScreen = ({ route }) => {
   const initialCategoryCode = route.params?.categoryCode || "all";
   const [categories, setCategories] = useState([]);
   const [selectedCategoryCode, setSelectedCategoryCode] = useState(initialCategoryCode);
   const [products, setProducts] = useState([]);
+  const [filteredProducts, setFilteredProducts] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [imageUri, setImageUri] = useState(null);
-  const [imageCacheBuster, setImageCacheBuster] = useState(Date.now());
+  const [imageErrors, setImageErrors] = useState({});
   const [previewImageUri, setPreviewImageUri] = useState(null);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const imageRefs = useRef({});
+  const searchInputRef = useRef(null);
 
   const fetchCategories = useCallback(async () => {
+    setLoading(true);
     try {
       const token = await AsyncStorage.getItem("token");
       const apiUrl = await getAPIUrl();
@@ -47,17 +55,15 @@ const AdminProductScreen = ({ route, navigation }) => {
       setCategories(response.data.categories);
     } catch (error) {
       if (error.response?.status === 401) {
-        Alert.alert("Session Expired", "Please log in again.", [
-          { text: "OK", onPress: () => navigation.navigate("Login") },
-        ]);
+        navigation.navigate("Login");
         await AsyncStorage.removeItem("token");
         await AsyncStorage.removeItem("userData");
       } else {
-        Alert.alert(
-          "Error",
-          error.response?.data?.message || error.message || "Failed to load categories"
-        );
+        console.error("Failed to load categories:", error.message);
+        Alert.alert("Error", "Failed to load categories. Please try again.");
       }
+    } finally {
+      setLoading(false);
     }
   }, [navigation]);
 
@@ -83,10 +89,11 @@ const AdminProductScreen = ({ route, navigation }) => {
                 ...product,
                 CategoryCode: category.CategoryCode,
                 Category: category.Category,
+                imageUrl: null,
               })),
             ];
           } catch (error) {
-            // Silently skip errors for individual categories
+            console.warn(`Failed to fetch products for category ${category.CategoryCode}:`, error.message);
           }
         }
       } else {
@@ -103,74 +110,62 @@ const AdminProductScreen = ({ route, navigation }) => {
           ...product,
           CategoryCode: parseInt(selectedCategoryCode),
           Category: category ? category.Category : "Unknown",
+          imageUrl: null,
         }));
       }
 
-      fetchedProducts.sort((a, b) => {
+      // Fetch images for products
+      const productsWithImages = await Promise.all(
+        fetchedProducts.map(async (product) => {
+          let imageUrl = null;
+          try {
+            const extensions = ["jpg", "png", "jpeg"];
+            const cacheBuster = Date.now();
+            for (const ext of extensions) {
+              const potentialImageUrl = `${apiUrl}/Uploads/product_${product.ProductCode}.${ext}?cb=${cacheBuster}`;
+              try {
+                const imageResponse = await axios.head(potentialImageUrl, {
+                  headers: { Authorization: `Bearer ${token}` },
+                });
+                if (imageResponse.status === 200) {
+                  imageUrl = potentialImageUrl;
+                  break;
+                }
+              } catch (err) {
+                if (err.response?.status !== 404) {
+                  console.warn(`Image fetch error for ${product.ProductCode}.${ext}:`, err.message);
+                }
+              }
+            }
+          } catch (err) {
+            console.warn(`Failed to fetch image for ${product.ProductCode}:`, err.message);
+          }
+          return { ...product, imageUrl };
+        })
+      );
+
+      productsWithImages.sort((a, b) => {
         if (a.CategoryCode === b.CategoryCode) {
           return a.Product.localeCompare(b.Product);
         }
         return a.CategoryCode - b.CategoryCode;
       });
 
-      setProducts(fetchedProducts);
+      setProducts(productsWithImages);
+      setFilteredProducts(productsWithImages);
     } catch (error) {
       if (error.response?.status === 401) {
-        Alert.alert("Session Expired", "Please log in again.", [
-          { text: "OK", onPress: () => navigation.navigate("Login") },
-        ]);
+        navigation.navigate("Login");
         await AsyncStorage.removeItem("token");
         await AsyncStorage.removeItem("userData");
       } else {
-        Alert.alert(
-          "Error",
-          error.response?.data?.message || error.message || "Failed to load products"
-        );
+        console.error("Failed to load products:", error.message);
+        Alert.alert("Error", "Failed to load products. Please try again.");
       }
     } finally {
       setLoading(false);
     }
   }, [selectedCategoryCode, categories, navigation]);
-
-  const loadProductImage = useCallback(async (productCode) => {
-    try {
-      const apiUrl = await getAPIUrl();
-      const extensions = ["jpg", "png", "jpeg"];
-      let foundImage = null;
-
-      for (const ext of extensions) {
-        const imageUrl = `${apiUrl}/uploads/product_${productCode}.${ext}?cb=${imageCacheBuster}`;
-        try {
-          const response = await axios.head(imageUrl);
-          foundImage = imageUrl;
-          break;
-        } catch (error) {
-          if (error.response?.status !== 404) {
-            throw error;
-          }
-        }
-      }
-
-      if (!foundImage) {
-        const defaultExt = "jpg";
-        foundImage = `${apiUrl}/Uploads/product_${productCode}.${defaultExt}?cb=${imageCacheBuster}`;
-      }
-
-      setImageUri(foundImage);
-    } catch (error) {
-      setImageUri(null);
-    }
-  }, [imageCacheBuster]);
-
-  const refreshScreen = useCallback(() => {
-    setImageCacheBuster(Date.now());
-    setPreviewImageUri(null);
-    setShowPreviewModal(false);
-    if (selectedProduct) {
-      loadProductImage(selectedProduct.ProductCode);
-    }
-    fetchProducts();
-  }, [fetchProducts, loadProductImage, selectedProduct]);
 
   useEffect(() => {
     fetchCategories();
@@ -183,65 +178,77 @@ const AdminProductScreen = ({ route, navigation }) => {
   }, [fetchProducts, categories]);
 
   useEffect(() => {
-    if (selectedProduct) {
-      loadProductImage(selectedProduct.ProductCode);
+    if (searchQuery.trim() === "") {
+      setFilteredProducts(products);
     } else {
-      setImageUri(null);
+      const filtered = products.filter((product) =>
+        product?.Product?.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+      setFilteredProducts(filtered);
     }
-  }, [selectedProduct, loadProductImage]);
+  }, [searchQuery, products]);
 
-  const selectAndPreviewImage = async () => {
-    if (!selectedProduct) {
-      Alert.alert("Error", "Please select a product first.");
+  const selectAndPreviewImage = async (product, isReplace = false) => {
+    setSelectedProduct(product);
+    if (!product.CategoryCode) {
+      console.error("Selected product is missing CategoryCode");
+      Alert.alert("Error", "Selected product is missing category information.");
       return;
     }
 
-    if (!selectedProduct.CategoryCode) {
-      Alert.alert("Error", "Selected product is missing CategoryCode.");
-      return;
-    }
-
-    if (Platform.OS !== "web") {
+    if (Platform.OS === "web") {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.onchange = async (event) => {
+        const file = event.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            setPreviewImageUri(e.target.result);
+            setShowPreviewModal(true);
+          };
+          reader.readAsDataURL(file);
+        }
+      };
+      input.click();
+    } else {
       try {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== "granted") {
-          Alert.alert(
-            "Permission Denied",
-            "We need access to your photo library to upload images.",
-            [
-              { text: "OK" },
-              { text: "Open Settings", onPress: () => Linking.openSettings() },
-            ]
-          );
+          console.error("Photo library permission denied");
+          Alert.alert("Error", "Photo library permission denied.");
           return;
         }
+
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          quality: 0.8,
+        });
+
+        if (result.canceled) {
+          return;
+        }
+
+        const asset = result.assets[0];
+        setPreviewImageUri(asset.uri);
+        setShowPreviewModal(true);
       } catch (error) {
-        Alert.alert("Error", "Failed to request permissions: " + error.message);
-        return;
+        console.error("Failed to select image:", error.message);
+        Alert.alert("Error", "Failed to select image. Please try again.");
       }
-    }
-
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.8,
-      });
-
-      if (result.canceled) {
-        return;
-      }
-
-      const asset = result.assets[0];
-      setPreviewImageUri(asset.uri);
-      setShowPreviewModal(true);
-    } catch (error) {
-      Alert.alert("Error", "Failed to select image: " + error.message);
     }
   };
 
   const cropImage = async () => {
     if (!previewImageUri) {
-      Alert.alert("Error", "No image to crop.");
+      console.error("No image to crop");
+      Alert.alert("Error", "No image selected for cropping.");
+      return;
+    }
+
+    if (Platform.OS === "web") {
+      console.log("Image cropping is not supported on web");
       return;
     }
 
@@ -285,15 +292,17 @@ const AdminProductScreen = ({ route, navigation }) => {
 
       setPreviewImageUri(manipResult.uri);
     } catch (error) {
-      Alert.alert("Error", "Failed to crop image: " + error.message);
+      console.error("Failed to crop image:", error.message);
+      Alert.alert("Error", "Failed to crop image. Please try again.");
     } finally {
       setUploading(false);
     }
   };
 
   const uploadImage = async () => {
-    if (!previewImageUri) {
-      Alert.alert("Error", "No image selected for upload.");
+    if (!previewImageUri || !selectedProduct) {
+      console.error("No image selected or product not set");
+      Alert.alert("Error", "No image or product selected for upload.");
       return;
     }
 
@@ -305,8 +314,7 @@ const AdminProductScreen = ({ route, navigation }) => {
       const mimeType = `image/${extension === "jpg" ? "jpeg" : extension}`;
       const fileName = `product_${selectedProduct.ProductCode}.${extension}`;
 
-      let fileData = { uri: previewImageUri, type: mimeType, name: fileName };
-
+      let fileData;
       if (Platform.OS === "web" && previewImageUri.startsWith("data:image")) {
         const base64Data = previewImageUri.split(",")[1];
         const byteCharacters = atob(base64Data);
@@ -316,7 +324,9 @@ const AdminProductScreen = ({ route, navigation }) => {
         }
         const byteArray = new Uint8Array(byteNumbers);
         const blob = new Blob([byteArray], { type: mimeType });
-        fileData = { uri: blob, type: mimeType, name: fileName };
+        fileData = new File([blob], fileName, { type: mimeType });
+      } else {
+        fileData = { uri: previewImageUri, type: mimeType, name: fileName };
       }
 
       const formData = new FormData();
@@ -326,7 +336,8 @@ const AdminProductScreen = ({ route, navigation }) => {
       try {
         const token = await AsyncStorage.getItem("token");
         const apiUrl = await getAPIUrl();
-        const uploadUrl = `${apiUrl}/stocks/${selectedProduct.CategoryCode}/${selectedProduct.ProductCode}/image`;
+        // Updated endpoint to match productimageUpload.js
+        const uploadUrl = `${apiUrl}/product-image/${parseInt(selectedProduct.CategoryCode)}/${parseInt(selectedProduct.ProductCode)}/image`;
         const uploadResponse = await axios.post(uploadUrl, formData, {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -335,106 +346,180 @@ const AdminProductScreen = ({ route, navigation }) => {
         });
 
         if (uploadResponse.data.status === "success") {
-          Alert.alert("Success", "Image uploaded successfully!");
+          console.log("Image uploaded successfully");
           setShowPreviewModal(false);
           setPreviewImageUri(null);
-          refreshScreen();
+          setSelectedProduct(null);
+          fetchProducts();
         } else {
           throw new Error(uploadResponse.data.message || "Failed to upload image");
         }
       } catch (error) {
-        Alert.alert(
-          "Error",
-          error.response?.data?.message || error.message || "Failed to upload image"
-        );
+        console.error("Failed to upload image:", error.message);
+        Alert.alert("Error", error.response?.data?.message || "Failed to upload image. Please try again.");
       } finally {
         setUploading(false);
       }
     } catch (error) {
-      Alert.alert("Error", "Failed to prepare image: " + error.message);
+      console.error("Failed to prepare image:", error.message);
+      Alert.alert("Error", "Failed to prepare image for upload. Please try again.");
     }
   };
 
-  const deleteImage = async () => {
-    if (!selectedProduct || !imageUri) {
-      Alert.alert("Error", "No image to delete.");
+  const deleteImage = (product) => {
+    setSelectedProduct(product);
+    if (!product || !product.imageUrl) {
+      console.error("No image to delete");
+      Alert.alert("Error", "No image available to delete.");
       return;
     }
-
-    if (!selectedProduct.CategoryCode) {
-      Alert.alert("Error", "Selected product is missing CategoryCode.");
+    if (!product.CategoryCode) {
+      console.error("Selected product is missing CategoryCode");
+      Alert.alert("Error", "Selected product is missing category information.");
       return;
     }
+    setShowDeleteModal(true);
+  };
 
-    Alert.alert(
-      "Confirm Delete",
-      "Are you sure you want to delete this image?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            setUploading(true);
-            try {
-              const token = await AsyncStorage.getItem("token");
-              const apiUrl = await getAPIUrl();
-              const deleteUrl = `${apiUrl}/stocks/${selectedProduct.CategoryCode}/${selectedProduct.ProductCode}/image`;
-              const deleteResponse = await axios.delete(deleteUrl, {
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                },
-              });
-
-              if (deleteResponse.data.status === "success") {
-                Alert.alert("Success", "Image deleted successfully!");
-                setImageUri(null);
-                refreshScreen();
-              } else {
-                throw new Error(deleteResponse.data.message || "Failed to delete image");
-              }
-            } catch (error) {
-              Alert.alert(
-                "Error",
-                error.response?.data?.message || error.message || "Failed to delete image"
-              );
-            } finally {
-              setUploading(false);
-            }
-          },
+  const confirmDeleteImage = async () => {
+    if (!selectedProduct) return;
+    setUploading(true);
+    try {
+      const token = await AsyncStorage.getItem("token");
+      const apiUrl = await getAPIUrl();
+      // Updated endpoint to match productimageUpload.js
+      const deleteUrl = `${apiUrl}/product-image/${parseInt(selectedProduct.CategoryCode)}/${parseInt(selectedProduct.ProductCode)}/image`;
+      const deleteResponse = await axios.delete(deleteUrl, {
+        headers: {
+          Authorization: `Bearer ${token}`,
         },
-      ]
-    );
+      });
+
+      if (deleteResponse.data.status === "success") {
+        console.log("Image deleted successfully");
+        setShowDeleteModal(false);
+        setSelectedProduct(null);
+        fetchProducts();
+      } else {
+        throw new Error(deleteResponse.data.message || "Failed to delete image");
+      }
+    } catch (error) {
+      console.error("Failed to delete image:", error.message);
+      Alert.alert("Error", error.response?.data?.message || "Failed to delete image. Please try again.");
+    } finally {
+      setUploading(false);
+      setShowDeleteModal(false);
+    }
+  };
+
+  const clearSearch = () => {
+    setSearchQuery("");
+    if (searchInputRef.current) {
+      searchInputRef.current.clear();
+      searchInputRef.current.blur();
+    }
   };
 
   const renderProductItem = ({ item }) => (
-    <TouchableOpacity
-      style={[
-        styles.productItem,
-        selectedProduct?.ProductCode === item.ProductCode && styles.selectedProductItem,
-      ]}
-      onPress={() => setSelectedProduct(item)}
-      disabled={uploading || loading}
-    >
-      <Text style={styles.productText}>{item.Product}</Text>
-      <Text style={styles.productCode}>Code: {item.ProductCode}</Text>
-      <Text style={styles.categoryText}>Category: {item.Category}</Text>
-    </TouchableOpacity>
-  );
-
-  const filteredProducts = products.filter((product) =>
-    product.Product.toLowerCase().includes(searchQuery.toLowerCase())
+    <View style={styles.productCard}>
+      <TouchableOpacity
+        onPress={() => {
+          if (item.imageUrl && !imageErrors[item.ProductCode]) {
+            setPreviewImageUri(item.imageUrl);
+            setShowPreviewModal(true);
+          }
+        }}
+        disabled={!item.imageUrl || imageErrors[item.ProductCode]}
+      >
+        {item.imageUrl && !imageErrors[item.ProductCode] ? (
+          <Image
+            ref={(ref) => (imageRefs.current[item.ProductCode] = ref)}
+            source={{ uri: item.imageUrl }}
+            style={styles.productImage}
+            resizeMode="cover"
+            onError={() => {
+              setImageErrors((prev) => ({ ...prev, [item.ProductCode]: true }));
+            }}
+          />
+        ) : (
+          <View style={styles.productImagePlaceholder}>
+            <Text style={styles.placeholderText}>No Image</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+      <Text style={styles.productName}>{item.Product}</Text>
+      <Text style={styles.productPrice}>Code: {item.ProductCode}</Text>
+      <View style={styles.quantityContainer}>
+        {!item.imageUrl ? (
+          <TouchableOpacity
+            style={[styles.quantityButton, uploading && styles.disabledButton]}
+            onPress={() => selectAndPreviewImage(item, false)}
+            disabled={uploading}
+          >
+            <Text style={styles.quantityButtonText}>Upload Photo</Text>
+          </TouchableOpacity>
+        ) : (
+          <>
+            <TouchableOpacity
+              style={[styles.quantityButton, styles.replaceButton, uploading && styles.disabledButton]}
+              onPress={() => selectAndPreviewImage(item, true)}
+              disabled={uploading}
+            >
+              <Text style={styles.quantityButtonText}>Replace</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.quantityButton, styles.removeButton, uploading && styles.disabledButton]}
+              onPress={() => deleteImage(item)}
+              disabled={uploading}
+            >
+              <Text style={styles.quantityButtonText}>Remove</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    </View>
   );
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Manage Product Images</Text>
+    <SafeAreaView
+      style={[
+        styles.container,
+        {
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom,
+          paddingLeft: insets.left,
+          paddingRight: insets.right,
+        },
+      ]}
+    >
+      <View style={styles.topNav}>
+        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate("Home")}>
+          <Ionicons name="home-outline" size={20} color="#3D2C29" />
+          <Text style={styles.navText}>Home</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.searchContainer}>
+        <TextInput
+          ref={searchInputRef}
+          style={styles.searchInput}
+          placeholder="Search products..."
+          placeholderTextColor="#6B5E4A"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          autoCapitalize="none"
+          returnKeyType="search"
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity style={styles.clearSearchButton} onPress={clearSearch}>
+            <Ionicons name="close-circle" size={20} color="#6B5E4A" />
+          </TouchableOpacity>
+        )}
+      </View>
       <Picker
         selectedValue={selectedCategoryCode}
         onValueChange={(value) => {
           setSelectedCategoryCode(value);
           setSelectedProduct(null);
-          setImageUri(null);
           setPreviewImageUri(null);
         }}
         style={styles.categoryPicker}
@@ -448,70 +533,22 @@ const AdminProductScreen = ({ route, navigation }) => {
           />
         ))}
       </Picker>
-      <TextInput
-        style={styles.searchInput}
-        placeholder="Search products..."
-        value={searchQuery}
-        onChangeText={setSearchQuery}
-        placeholderTextColor="#757575"
-      />
       {loading ? (
-        <ActivityIndicator size="large" color="#A0522D" style={styles.loading} />
+        <ActivityIndicator size="large" color="#F28C38" style={styles.loading} />
       ) : (
-        <>
-          <FlatList
-            data={filteredProducts}
-            renderItem={renderProductItem}
-            keyExtractor={(item) => item.ProductCode.toString()}
-            contentContainerStyle={styles.productList}
-            ListEmptyComponent={<Text style={styles.emptyText}>No products found</Text>}
-          />
-          {selectedProduct && (
-            <View style={styles.uploadSection}>
-              <Text style={styles.selectedProductText}>
-                Selected: {selectedProduct.Product} (Code: {selectedProduct.ProductCode}, Category: {selectedProduct.Category})
-              </Text>
-              {imageUri ? (
-                <Image
-                  source={{ uri: imageUri }}
-                  style={styles.productImage}
-                  onError={() => {
-                    setImageUri(null);
-                  }}
-                />
-              ) : (
-                <View style={styles.imagePlaceholder}>
-                  <Text style={styles.placeholderText}>No Image</Text>
-                </View>
-              )}
-              <View style={styles.buttonContainer}>
-                <TouchableOpacity
-                  style={[styles.uploadButton, uploading && styles.disabledButton]}
-                  onPress={selectAndPreviewImage}
-                  disabled={uploading}
-                >
-                  <Text style={styles.uploadButtonText}>
-                    {uploading ? "Processing..." : "Select Image"}
-                  </Text>
-                </TouchableOpacity>
-                {imageUri && (
-                  <TouchableOpacity
-                    style={[styles.deleteButton, uploading && styles.disabledButton]}
-                    onPress={deleteImage}
-                    disabled={uploading}
-                  >
-                    <Text style={styles.deleteButtonText}>Delete Image</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-          )}
-        </>
+        <FlatList
+          data={filteredProducts}
+          renderItem={renderProductItem}
+          keyExtractor={(item) => item.ProductCode.toString()}
+          contentContainerStyle={styles.productContainer}
+          numColumns={2}
+          ListEmptyComponent={<Text style={styles.noDataText}>No products found.</Text>}
+        />
       )}
       <Modal
         visible={showPreviewModal}
         transparent={true}
-        animationType="slide"
+        animationType="fade"
         onRequestClose={() => {
           setShowPreviewModal(false);
           setPreviewImageUri(null);
@@ -523,13 +560,15 @@ const AdminProductScreen = ({ route, navigation }) => {
               <Image source={{ uri: previewImageUri }} style={styles.previewImage} />
             )}
             <View style={styles.modalButtonContainer}>
-              <TouchableOpacity
-                style={[styles.modalButton, uploading && styles.disabledButton]}
-                onPress={cropImage}
-                disabled={uploading}
-              >
-                <Text style={styles.modalButtonText}>Crop Image</Text>
-              </TouchableOpacity>
+              {Platform.OS !== "web" && (
+                <TouchableOpacity
+                  style={[styles.modalButton, uploading && styles.disabledButton]}
+                  onPress={cropImage}
+                  disabled={uploading}
+                >
+                  <Text style={styles.modalButtonText}>Crop Image</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 style={[styles.modalButton, uploading && styles.disabledButton]}
                 onPress={uploadImage}
@@ -553,7 +592,38 @@ const AdminProductScreen = ({ route, navigation }) => {
           </View>
         </View>
       </Modal>
-    </View>
+      <Modal
+        visible={showDeleteModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowDeleteModal(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.previewContainer}>
+            <Text style={styles.modalTitle}>Confirm Delete</Text>
+            <Text style={styles.modalMessage}>
+              Are you sure you want to delete the image for {selectedProduct?.Product}? This action cannot be undone.
+            </Text>
+            <View style={styles.modalButtonContainer}>
+              <TouchableOpacity
+                style={[styles.modalButton, uploading && styles.disabledButton, styles.removeButton]}
+                onPress={confirmDeleteImage}
+                disabled={uploading}
+              >
+                <Text style={styles.modalButtonText}>Delete</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, uploading && styles.disabledButton]}
+                onPress={() => setShowDeleteModal(false)}
+                disabled={uploading}
+              >
+                <Text style={styles.modalButtonText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 };
 

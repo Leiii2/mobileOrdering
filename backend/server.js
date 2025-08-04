@@ -3,7 +3,7 @@ const express = require("express");
 const sql = require("mssql");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
-const path = require("path"); // Add path for handling file paths
+const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 2025;
@@ -18,7 +18,7 @@ app.use(cors({
 }));
 
 // Serve the uploads folder statically
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use("/uploads", express.static(path.join(__dirname, "Uploads")));
 
 // Database Configuration
 const dbConfig = {
@@ -45,7 +45,7 @@ const connectToDatabase = async () => {
     if (!poolPromise) {
       poolPromise = new sql.ConnectionPool(dbConfig).connect();
       const pool = await poolPromise;
-      console.log("✅ Connected to database successfully"); // Add logging
+      console.log("✅ Connected to database successfully");
       pool.on("error", (err) => {
         console.error("❌ Database pool error:", err);
         poolPromise = null;
@@ -86,8 +86,13 @@ app.use("/stocks", require("./routes/stocks"));
 app.use("/categories", require("./routes/categories"));
 app.use("/traceup", require("./routes/traceUp"));
 app.use("/report", require("./routes/report"));
-app.use("/pos", require("./routes/pos"));
+app.use("/pos", require("./routes/pos")); // For posScreen.js
+app.use("/pending-running-bill", require("./routes/pendingRunningBill")); // For PendingOrdersScreen.js and RunningBillsScreen.js
+app.use("/runningbill-checkout", require("./routes/runningbillCheckout")); // Updated endpoint for checkout process
 app.use("/reports", require("./routes/dailyReport"));
+app.use("/product-image", require("./routes/productimageUpload"));
+app.use("/products", require("./routes/manageProducts"));
+app.use("/customer-order", require("./routes/customerOrder"));
 
 // Default Route
 app.get("/", (req, res) => {
@@ -96,7 +101,7 @@ app.get("/", (req, res) => {
 
 // Global Error Handler
 app.use((err, req, res, next) => {
-  console.error("❌ Server error:", err); // Add logging for errors
+  console.error("❌ Server error:", err);
   res.status(500).json({
     status: "error",
     message: "Something went wrong on the server",

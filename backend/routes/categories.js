@@ -28,7 +28,69 @@ const verifyAdmin = (req, res, next) => {
   }
 };
 
-// Fetch All Categories (GET)
+// Fetch All Categories (Public - GET)
+router.get("/public/categories", async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    if (!pool) {
+      return res.status(500).json({
+        status: "error",
+        message: "Database connection failed",
+      });
+    }
+
+    const query = `
+      SELECT CategoryCode, Category 
+      FROM aTCategory 
+      WHERE Active = 1`;
+
+    const result = await pool.request().query(query);
+
+    res.json({
+      status: "success",
+      categories: result.recordset,
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      message: "Database error",
+      error: error.message,
+    });
+  }
+});
+
+// Fetch All Categories for Customer Order Screen (Public - GET)
+router.get("/public/customer/categories", async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    if (!pool) {
+      return res.status(500).json({
+        status: "error",
+        message: "Database connection failed",
+      });
+    }
+
+    const query = `
+      SELECT CategoryCode, Category 
+      FROM aTCategory 
+      WHERE Active = 1`;
+
+    const result = await pool.request().query(query);
+
+    res.json({
+      status: "success",
+      categories: result.recordset,
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      message: "Database error",
+      error: error.message,
+    });
+  }
+});
+
+// Fetch All Categories (Authenticated - GET)
 router.get("/", async (req, res) => {
   try {
     const pool = await poolPromise;
@@ -221,6 +283,13 @@ router.put("/:categoryCode", verifyAdmin, async (req, res) => {
 // Delete a Category (DELETE) - Admin only
 router.delete("/:categoryCode", verifyAdmin, async (req, res) => {
   const { categoryCode } = req.params;
+  const parsedCategoryCode = parseInt(categoryCode);
+  if (isNaN(parsedCategoryCode)) {
+    return res.status(400).json({
+      status: "error",
+      message: "Invalid category code",
+    });
+  }
 
   try {
     const pool = await poolPromise;
@@ -237,7 +306,7 @@ router.delete("/:categoryCode", verifyAdmin, async (req, res) => {
       WHERE CategoryCode = @CategoryCode AND Active = 1`;
     const checkResult = await pool
       .request()
-      .input("CategoryCode", sql.Int, parseInt(categoryCode))
+      .input("CategoryCode", sql.Int, parsedCategoryCode)
       .query(checkQuery);
 
     if (checkResult.recordset[0].count > 0) {
@@ -248,19 +317,18 @@ router.delete("/:categoryCode", verifyAdmin, async (req, res) => {
     }
 
     const query = `
-      UPDATE aTCategory 
-      SET Active = 0 
-      WHERE CategoryCode = @CategoryCode`;
+      DELETE FROM aTCategory 
+      WHERE CategoryCode = @CategoryCode AND Active = 1`;
 
     const result = await pool
       .request()
-      .input("CategoryCode", sql.Int, parseInt(categoryCode))
+      .input("CategoryCode", sql.Int, parsedCategoryCode)
       .query(query);
 
     if (result.rowsAffected[0] === 0) {
       return res.status(404).json({
         status: "error",
-        message: "Category not found",
+        message: "Category not found or already deleted",
       });
     }
 

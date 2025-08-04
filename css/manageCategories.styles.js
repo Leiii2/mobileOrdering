@@ -1,11 +1,11 @@
-import { StyleSheet } from 'react-native';
+import { StyleSheet, Platform } from 'react-native';
 
 export default StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: 'rgba(0, 206, 209, 0.2)', // Light teal tint
     padding: 16,
-    marginTop: 40,
+    marginTop: Platform.OS === 'web' ? 0 : 20, // Remove marginTop for web to avoid extra space
   },
   header: {
     flexDirection: 'row',
@@ -53,6 +53,7 @@ export default StyleSheet.create({
     backgroundColor: '#FFFFFF',
     marginRight: 12,
     fontSize: 16,
+    marginBottom: 8, // Space between name and price inputs
   },
   addButton: {
     backgroundColor: '#00CED1',
@@ -73,7 +74,7 @@ export default StyleSheet.create({
     padding: 16,
     backgroundColor: '#FFFFFF',
     borderRadius: 6,
-    marginBottom: 12,
+    marginBottom: 16,
     borderWidth: 2,
     borderColor: '#00CED1',
     elevation: 4,
@@ -88,7 +89,7 @@ export default StyleSheet.create({
     padding: 16,
     backgroundColor: '#FFFFFF',
     borderRadius: 6,
-    marginBottom: 12,
+    marginBottom: 16,
     borderWidth: 2,
     borderColor: '#00CED1',
     elevation: 4,
@@ -97,29 +98,11 @@ export default StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     shadowRadius: 6,
   },
-  productImageContainer: {
-    marginRight: 12,
-  },
-  productImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 6,
-  },
-  productImagePlaceholder: {
-    width: 60,
-    height: 60,
-    borderRadius: 6,
-    backgroundColor: '#E0E0E0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  placeholderText: {
-    color: '#757575',
-    fontSize: 12,
-  },
   productDetails: {
     flex: 1,
-    justifyContent: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   itemText: {
     fontSize: 16,
@@ -147,13 +130,15 @@ export default StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
+  scrollContainer: {
+    flexGrow: 1,
+    maxHeight: Platform.OS === 'web' ? '80vh' : 'auto',
+    ...(Platform.OS === 'web' && { overflowY: 'auto' }),
+  },
   listContent: {
     paddingBottom: 100,
   },
   loading: {
     marginTop: 20,
-  },
-  imageLoading: {
-    marginLeft: 12,
   },
 });

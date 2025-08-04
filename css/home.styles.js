@@ -73,7 +73,7 @@ const homeStyles = StyleSheet.create({
     marginBottom: 20,
   },
   homeLogoutButton: {
-    backgroundColor: '#FF69B4', // Hot pink to match "Alicia's Special" text, replacing fiery orange-red
+    backgroundColor: '#FF69B4', // Hot pink to match "Alicia's Special" text
     paddingVertical: 12,
     paddingHorizontal: 25,
     borderRadius: 12,

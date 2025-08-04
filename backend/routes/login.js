@@ -63,7 +63,7 @@ router.post("/", async (req, res) => {
         pos: user.POS || false,
       },
       process.env.JWT_SECRET,
-      { expiresIn: "1h" }
+      { expiresIn: "10h" }
     );
 
     console.log("Login successful", { userCode: user.UserCode, name: user.Name });

@@ -44,11 +44,10 @@ router.post("/preview-discount", verifyPOS, async (req, res) => {
     return res.status(400).json({ status: "error", message: "Number of seniors cannot exceed total number of customers" });
   }
   if (!discountCode) {
-    // No discount code provided, return totals without discount
     let total = 0;
     for (const item of cart) {
       const quantity = parseFloat(item.quantity);
-      const price = parseFloat(item.price || 100);
+      const price = parseFloat(item.price);
       if (isNaN(quantity) || isNaN(price)) {
         return res.status(400).json({ status: "error", message: `Invalid quantity or price for product ${item.productCode}` });
       }
@@ -73,33 +72,28 @@ router.post("/preview-discount", verifyPOS, async (req, res) => {
   try {
     const pool = await poolPromise;
 
-    // Calculate Total
     let total = 0;
     for (const item of cart) {
       const quantity = parseFloat(item.quantity);
-      const price = parseFloat(item.price || 100);
+      const price = parseFloat(item.price);
       if (isNaN(quantity) || isNaN(price)) {
         return res.status(400).json({ status: "error", message: `Invalid quantity or price for product ${item.productCode}` });
       }
       total += quantity * price;
     }
 
-    // Calculate NetOfVat and Vat
     const netOfVat = total / 1.12;
     const vat = total - netOfVat;
 
-    // Initialize discount variables
     let vatDiscount = 0;
     let percentageDiscount = 0;
     let discountPercentage = 0;
 
-    // Apply senior discount if applicable
     if (seniors > 0) {
       const totalPerPerson = total / pax;
       const seniorTotal = totalPerPerson * seniors;
       vatDiscount = (vat / pax) * seniors;
 
-      // Fetch discount percentage from database if discountCode is provided
       const discountQuery = `
         SELECT Discount
         FROM dbo.atDiscount
@@ -119,7 +113,6 @@ router.post("/preview-discount", verifyPOS, async (req, res) => {
       }
       percentageDiscount = (seniorTotal / 1.12) * (discountPercentage / 100);
     } else {
-      // No seniors, apply discount code only if provided
       const discountQuery = `
         SELECT Discount
         FROM dbo.atDiscount
@@ -140,10 +133,7 @@ router.post("/preview-discount", verifyPOS, async (req, res) => {
       percentageDiscount = (total / 1.12) * (discountPercentage / 100);
     }
 
-    // Total discount
     const totalDiscount = vatDiscount + percentageDiscount;
-
-    // Total due after discount
     const totalDue = total - totalDiscount;
     if (isNaN(totalDue)) {
       return res.status(500).json({ status: "error", message: "Failed to calculate total due due to invalid calculations" });
@@ -168,8 +158,9 @@ router.post("/preview-discount", verifyPOS, async (req, res) => {
 
 // Checkout route
 router.post("/checkout", verifyPOS, async (req, res) => {
-  const { cart, dineIn, amountPaid, discountCode, numberOfPax, numberOfSeniors } = req.body;
+  const { cart, dineIn, amountPaid, discountCode, numberOfPax, numberOfSeniors, tableNo, notes } = req.body;
   const userCode = req.user.userCode;
+  const userName = req.user.name || "Unknown User"; // Assuming JWT includes user name; adjust if needed
 
   // Input validation
   if (!Array.isArray(cart) || cart.length === 0) {
@@ -181,6 +172,8 @@ router.post("/checkout", verifyPOS, async (req, res) => {
 
   const pax = parseInt(numberOfPax) || 0;
   const seniors = parseInt(numberOfSeniors) || 0;
+  const tableNumber = tableNo !== undefined && tableNo !== null ? parseInt(tableNo) : null; // Convert to integer or null
+  const notesText = notes || ""; // Use empty string if no notes provided
 
   if (pax <= 0) {
     return res.status(400).json({ status: "error", message: "Number of customers must be greater than 0" });
@@ -207,7 +200,7 @@ router.post("/checkout", verifyPOS, async (req, res) => {
     let total = 0;
     for (const item of cart) {
       const quantity = parseFloat(item.quantity);
-      const price = parseFloat(item.price || 100);
+      const price = parseFloat(item.price);
       if (isNaN(quantity) || isNaN(price)) {
         throw new Error(`Invalid quantity or price for product ${item.productCode}`);
       }
@@ -301,9 +294,9 @@ router.post("/checkout", verifyPOS, async (req, res) => {
       )
       OUTPUT inserted.POSCode
       VALUES (
-        @InvoiceNo, GETDATE(), GETDATE(), @UserCode, @DineIn, @TakeOut, NULL,
+        @InvoiceNo, GETDATE(), GETDATE(), @UserCode, @DineIn, @TakeOut, @TableNo,
         @Total, @NetOfVat, @Vat, @Discount, @DiscNo, @TotalDue, @AmountPaid,
-        1, NULL, @Senior, 0, NULL, 0, 0,
+        1, NULL, @Senior, 0, @Notes, 0, 0,
         NULL, NULL, 0, 0, @TotCustomer, @SC,
         0, 0, @DiscountCode, 0, 0, NULL,
         NULL, NULL, 0, @CashAmount,
@@ -317,6 +310,7 @@ router.post("/checkout", verifyPOS, async (req, res) => {
       .input("UserCode", sql.Int, userCode)
       .input("DineIn", sql.Bit, dineIn)
       .input("TakeOut", sql.Bit, !dineIn)
+      .input("TableNo", sql.NVarChar(50), tableNumber ? tableNumber.toString() : null) // Use table number
       .input("Total", sql.Money, total)
       .input("NetOfVat", sql.Money, netOfVat)
       .input("Vat", sql.Money, vat)
@@ -329,6 +323,7 @@ router.post("/checkout", verifyPOS, async (req, res) => {
       .input("SC", sql.Int, seniors)
       .input("DiscountCode", sql.Int, discountCode ? parseInt(discountCode) : null)
       .input("CashAmount", sql.Money, parsedAmountPaid)
+      .input("Notes", sql.NVarChar(100), notesText) // Use notes for TPos
       .query(posInsertQuery);
 
     const newPOSCode = posResult.recordset[0].POSCode;
@@ -349,9 +344,59 @@ router.post("/checkout", verifyPOS, async (req, res) => {
         .input("Qty", sql.Money, quantity)
         .input("Price", sql.Money, price)
         .input("Subtotal", sql.Money, subtotal)
-        .input("Notes", sql.NVarChar(100), "")
+        .input("Notes", sql.NVarChar(100), notesText) // Use notes for TPosDetails
         .input("Grams", sql.Int, 0)
         .query(detailsInsertQuery);
+    }
+
+    // Insert into TTempKitchenPrint
+    const kitchenInsertQuery = `
+      INSERT INTO dbo.TTempKitchenPrint (
+        TableNo, POSCode, DineIn, TakeOut, Notes, ProductCode, Qty, Done,
+        Product, Kitchen, Category, Name, Grams
+      )
+      VALUES (
+        @TableNo, @POSCode, @DineIn, @TakeOut, @Notes, @ProductCode, @Qty, @Done,
+        @Product, @Kitchen, @Category, @Name, @Grams
+      );
+    `;
+    for (const item of cart) {
+      const productCode = parseInt(item.productCode);
+      const quantity = parseFloat(item.quantity);
+
+      // Fetch Product and Category names
+      const productQuery = `
+        SELECT p.Product, c.Category
+        FROM dbo.aTProduct p
+        LEFT JOIN dbo.aTCategory c ON p.CategoryCode = c.CategoryCode
+        WHERE p.ProductCode = @ProductCode AND p.Active = 1;
+      `;
+      const productResult = await new sql.Request(transaction)
+        .input("ProductCode", sql.Int, productCode)
+        .query(productQuery);
+
+      if (productResult.recordset.length === 0) {
+        throw new Error(`Product with ProductCode ${productCode} not found or inactive`);
+      }
+
+      const productName = productResult.recordset[0].Product || "Unknown Product";
+      const categoryName = productResult.recordset[0].Category || "Uncategorized";
+
+      await new sql.Request(transaction)
+        .input("TableNo", sql.NVarChar(50), tableNumber ? tableNumber.toString() : null) // Use table number
+        .input("POSCode", sql.Int, newPOSCode)
+        .input("DineIn", sql.Bit, dineIn)
+        .input("TakeOut", sql.Bit, !dineIn)
+        .input("Notes", sql.NVarChar(200), notesText) // Use notes
+        .input("ProductCode", sql.Int, productCode)
+        .input("Qty", sql.Int, quantity)
+        .input("Done", sql.Bit, 0) // Default to not done
+        .input("Product", sql.NVarChar(80), productName)
+        .input("Kitchen", sql.Bit, 0) // Default to 0 as not specified
+        .input("Category", sql.NVarChar(50), categoryName)
+        .input("Name", sql.NVarChar(50), userName)
+        .input("Grams", sql.Int, 0) // Default to 0 as in TPosDetails
+        .query(kitchenInsertQuery);
     }
 
     // Update stock in TStockOnHandTraceUp or TStockOnHandTraceUp2, and also in TStockOnHand or TStockOnHand2
@@ -359,7 +404,6 @@ router.post("/checkout", verifyPOS, async (req, res) => {
       const productCode = parseInt(item.productCode);
       const quantity = parseFloat(item.quantity);
 
-      // Update TStockOnHandTraceUp or TStockOnHandTraceUp2
       let lastTraceResult = await new sql.Request(transaction)
         .input("ProductCode", sql.Int, productCode)
         .query(`
@@ -424,11 +468,9 @@ router.post("/checkout", verifyPOS, async (req, res) => {
         .input("Remarks", sql.NText, `Invoice No: ${newInvoiceNo}`)
         .query(stockTraceInsertQuery);
 
-      // Update StockOnHand in TStockOnHand or TStockOnHand2
       let stockTable = null;
       let currentStockOnHand = 0;
 
-      // Check TStockOnHand first
       const stockOnHandResult = await new sql.Request(transaction)
         .input("ProductCode", sql.Int, productCode)
         .query(`
@@ -441,7 +483,6 @@ router.post("/checkout", verifyPOS, async (req, res) => {
         stockTable = 'TStockOnHand';
         currentStockOnHand = parseFloat(stockOnHandResult.recordset[0].StockOnHand) || 0;
       } else {
-        // If not found in TStockOnHand, check TStockOnHand2
         const stockOnHand2Result = await new sql.Request(transaction)
           .input("ProductCode", sql.Int, productCode)
           .query(`
@@ -455,7 +496,6 @@ router.post("/checkout", verifyPOS, async (req, res) => {
         }
       }
 
-      // If the ProductCode is found in either table, update the StockOnHand
       if (stockTable) {
         const newStockOnHand = currentStockOnHand - quantity;
 

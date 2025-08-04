@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
-  FlatList,
   View,
   Text,
   TextInput,
@@ -9,6 +8,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
@@ -23,9 +23,11 @@ const ManageCategories = () => {
   const [loading, setLoading] = useState(false);
   const [newCategory, setNewCategory] = useState("");
   const [newProduct, setNewProduct] = useState("");
+  const [newProductPrice, setNewProductPrice] = useState("");
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [editCategory, setEditCategory] = useState(null);
   const [editProduct, setEditProduct] = useState(null);
+  const [editProductPrice, setEditProductPrice] = useState("");
   const [editProductIndex, setEditProductIndex] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -62,13 +64,11 @@ const ManageCategories = () => {
       setCategories(response.data.categories);
     } catch (err) {
       if (err.response?.status === 401) {
-        Alert.alert("Session Expired", "Please log in again.", [
-          { text: "OK", onPress: () => navigation.navigate("Login") },
-        ]);
+        showConfirm("Session Expired", "Please log in again.", () => navigation.navigate("Login"));
         await AsyncStorage.removeItem("token");
         await AsyncStorage.removeItem("userData");
       } else {
-        Alert.alert(
+        showConfirm(
           "Error",
           err.response?.data?.message || err.message || "Failed to load categories."
         );
@@ -83,7 +83,7 @@ const ManageCategories = () => {
     try {
       const token = await AsyncStorage.getItem("token");
       const apiUrl = await getAPIUrl();
-      const response = await axios.get(`${apiUrl}/stocks/${categoryCode}`, {
+      const response = await axios.get(`${apiUrl}/products/${categoryCode}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!Array.isArray(response.data.products)) {
@@ -93,13 +93,11 @@ const ManageCategories = () => {
       setSelectedCategory(categories.find((cat) => cat.CategoryCode === categoryCode) || null);
     } catch (err) {
       if (err.response?.status === 401) {
-        Alert.alert("Session Expired", "Please log in again.", [
-          { text: "OK", onPress: () => navigation.navigate("Login") },
-        ]);
+        showConfirm("Session Expired", "Please log in again.", () => navigation.navigate("Login"));
         await AsyncStorage.removeItem("token");
         await AsyncStorage.removeItem("userData");
       } else {
-        Alert.alert(
+        showConfirm(
           "Error",
           err.response?.data?.message || err.message || "Failed to load products."
         );
@@ -111,16 +109,16 @@ const ManageCategories = () => {
 
   const addCategory = useCallback(async () => {
     if (!isAdmin) {
-      Alert.alert("Error", "Only admins can add categories.");
+      showConfirm("Error", "Only admins can add categories.");
       return;
     }
     const trimmedCategory = newCategory.trim();
     if (!trimmedCategory) {
-      Alert.alert("Error", "Category name cannot be empty.");
+      showConfirm("Error", "Category name cannot be empty.");
       return;
     }
     if (trimmedCategory.length > 500) {
-      Alert.alert("Error", "Category name exceeds 500 characters.");
+      showConfirm("Error", "Category name exceeds 500 characters.");
       return;
     }
     setLoading(true);
@@ -138,9 +136,9 @@ const ManageCategories = () => {
       }
       setCategories([...categories, newCategoryData]);
       setNewCategory("");
-      Alert.alert("Success", "Category added successfully.");
+      showConfirm("Success", "Category added successfully.");
     } catch (err) {
-      Alert.alert(
+      showConfirm(
         "Error",
         err.response?.data?.message || err.message || "Failed to add category."
       );
@@ -152,47 +150,41 @@ const ManageCategories = () => {
   const updateCategory = useCallback(
     async (categoryCode) => {
       if (!isAdmin) {
-        Alert.alert("Error", "Only admins can update categories.");
+        showConfirm("Error", "Only admins can update categories.");
         return;
       }
       if (!editCategory?.Category.trim()) {
-        Alert.alert("Error", "Category name cannot be empty.");
+        showConfirm("Error", "Category name cannot be empty.");
         return;
       }
       if (editCategory.Category.length > 500) {
-        Alert.alert("Error", "Category name exceeds 500 characters.");
+        showConfirm("Error", "Category name exceeds 500 characters.");
         return;
       }
-      Alert.alert("Confirm", "Are you sure you want to save changes?", [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Save",
-          onPress: async () => {
-            setLoading(true);
-            try {
-              const token = await AsyncStorage.getItem("token");
-              const apiUrl = await getAPIUrl();
-              await axios.put(
-                `${apiUrl}/categories/${categoryCode}`,
-                { Category: editCategory.Category },
-                { headers: { Authorization: `Bearer ${token}` } }
-              );
-              setCategories(
-                categories.map((cat) => (cat.CategoryCode === categoryCode ? editCategory : cat))
-              );
-              setEditCategory(null);
-              Alert.alert("Success", "Category updated successfully.");
-            } catch (err) {
-              Alert.alert(
-                "Error",
-                err.response?.data?.message || err.message || "Failed to update category."
-              );
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]);
+      showConfirm("Confirm", "Are you sure you want to save changes?", async () => {
+        setLoading(true);
+        try {
+          const token = await AsyncStorage.getItem("token");
+          const apiUrl = await getAPIUrl();
+          await axios.put(
+            `${apiUrl}/categories/${categoryCode}`,
+            { Category: editCategory.Category },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          setCategories(
+            categories.map((cat) => (cat.CategoryCode === categoryCode ? editCategory : cat))
+          );
+          setEditCategory(null);
+          showConfirm("Success", "Category updated successfully.");
+        } catch (err) {
+          showConfirm(
+            "Error",
+            err.response?.data?.message || err.message || "Failed to update category."
+          );
+        } finally {
+          setLoading(false);
+        }
+      });
     },
     [editCategory, categories, isAdmin]
   );
@@ -200,54 +192,52 @@ const ManageCategories = () => {
   const deleteCategory = useCallback(
     async (categoryCode) => {
       if (!isAdmin) {
-        Alert.alert("Error", "Only admins can delete categories.");
+        showConfirm("Error", "Only admins can delete categories.");
         return;
       }
-      Alert.alert("Confirm", "Are you sure you want to delete this category?", [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            setLoading(true);
-            try {
-              const token = await AsyncStorage.getItem("token");
-              const apiUrl = await getAPIUrl();
-              await axios.delete(`${apiUrl}/categories/${categoryCode}`, {
-                headers: { Authorization: `Bearer ${token}` },
-              });
-              setCategories(categories.filter((cat) => cat.CategoryCode !== categoryCode));
-              if (selectedCategory?.CategoryCode === categoryCode) {
-                setSelectedCategory(null);
-                setProducts([]);
-              }
-              Alert.alert("Success", "Category deleted successfully.");
-            } catch (err) {
-              Alert.alert(
-                "Error",
-                err.response?.data?.message || err.message || "Failed to delete category."
-              );
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]);
+      showConfirm("Confirm", "Are you sure you want to delete this category?", async () => {
+        setLoading(true);
+        try {
+          const token = await AsyncStorage.getItem("token");
+          const apiUrl = await getAPIUrl();
+          await axios.delete(`${apiUrl}/categories/${categoryCode}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          setCategories(categories.filter((cat) => cat.CategoryCode !== categoryCode));
+          if (selectedCategory?.CategoryCode === categoryCode) {
+            setSelectedCategory(null);
+            setProducts([]);
+          }
+          showConfirm("Success", "Category deleted successfully.");
+        } catch (err) {
+          showConfirm(
+            "Error",
+            err.response?.data?.message || err.message || "Failed to delete category."
+          );
+        } finally {
+          setLoading(false);
+        }
+      });
     },
     [categories, selectedCategory, products, isAdmin]
   );
 
   const addProduct = useCallback(async () => {
     if (!isAdmin) {
-      Alert.alert("Error", "Only admins can add products.");
+      showConfirm("Error", "Only admins can add products.");
       return;
     }
-    if (!newProduct.trim() || !selectedCategory) {
-      Alert.alert("Error", "Product name and category selection are required.");
+    if (!newProduct.trim() || !selectedCategory || !newProductPrice.trim()) {
+      showConfirm("Error", "Product name, category selection, and price are required.");
       return;
     }
     if (newProduct.length > 500) {
-      Alert.alert("Error", "Product name exceeds 500 characters.");
+      showConfirm("Error", "Product name exceeds 500 characters.");
+      return;
+    }
+    const priceValue = parseFloat(newProductPrice.replace(/[^0-9.]/g, ""));
+    if (isNaN(priceValue) || priceValue <= 0) {
+      showConfirm("Error", "Please enter a valid price greater than 0.");
       return;
     }
     setLoading(true);
@@ -255,8 +245,8 @@ const ManageCategories = () => {
       const token = await AsyncStorage.getItem("token");
       const apiUrl = await getAPIUrl();
       const response = await axios.post(
-        `${apiUrl}/stocks/${selectedCategory.CategoryCode}`,
-        { Product: newProduct },
+        `${apiUrl}/products/${selectedCategory.CategoryCode}`,
+        { Product: newProduct, SellingPrice: priceValue },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const newProductData = response.data.product;
@@ -265,99 +255,119 @@ const ManageCategories = () => {
       }
       setProducts([...products, newProductData]);
       setNewProduct("");
-      Alert.alert("Success", "Product added successfully.");
+      setNewProductPrice("");
+      showConfirm("Success", "Product added successfully.");
     } catch (err) {
-      Alert.alert(
+      showConfirm(
         "Error",
         err.response?.data?.message || err.message || "Failed to add product."
       );
     } finally {
       setLoading(false);
     }
-  }, [newProduct, selectedCategory, products, isAdmin]);
+  }, [newProduct, newProductPrice, selectedCategory, products, isAdmin]);
 
   const updateProduct = useCallback(
     async (productCode) => {
       if (!isAdmin) {
-        Alert.alert("Error", "Only admins can update products.");
+        showConfirm("Error", "Only admins can update products.");
         return;
       }
       if (!editProduct?.Product.trim()) {
-        Alert.alert("Error", "Product name cannot be empty.");
+        showConfirm("Error", "Product name cannot be empty.");
         return;
       }
       if (editProduct.Product.length > 500) {
-        Alert.alert("Error", "Product name exceeds 500 characters.");
+        showConfirm("Error", "Product name exceeds 500 characters.");
         return;
       }
-      Alert.alert("Confirm", "Are you sure you want to save changes?", [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Save",
-          onPress: async () => {
-            setLoading(true);
-            try {
-              const token = await AsyncStorage.getItem("token");
-              const apiUrl = await getAPIUrl();
-              await axios.put(
-                `${apiUrl}/stocks/${selectedCategory.CategoryCode}/${productCode}`,
-                { Product: editProduct.Product },
-                { headers: { Authorization: `Bearer ${token}` } }
-              );
-              setProducts(products.map((prod) => (prod.ProductCode === productCode ? editProduct : prod)));
-              setEditProduct(null);
-              setEditProductIndex(null);
-              Alert.alert("Success", "Product updated successfully.");
-            } catch (err) {
-              Alert.alert(
-                "Error",
-                err.response?.data?.message || err.message || "Failed to update product."
-              );
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]);
+      const priceValue = parseFloat(editProductPrice.replace(/[^0-9.]/g, ""));
+      if (isNaN(priceValue) || priceValue <= 0) {
+        showConfirm("Error", "Please enter a valid price greater than 0.");
+        return;
+      }
+      showConfirm("Confirm", "Are you sure you want to save changes?", async () => {
+        setLoading(true);
+        try {
+          const token = await AsyncStorage.getItem("token");
+          const apiUrl = await getAPIUrl();
+          await axios.put(
+            `${apiUrl}/products/${selectedCategory.CategoryCode}/${productCode}`,
+            { Product: editProduct.Product, SellingPrice: priceValue },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          setProducts(products.map((prod) => (prod.ProductCode === productCode ? { ...editProduct, SellingPrice: priceValue } : prod)));
+          setEditProduct(null);
+          setEditProductPrice("");
+          setEditProductIndex(null);
+          showConfirm("Success", "Product updated successfully.");
+        } catch (err) {
+          showConfirm(
+            "Error",
+            err.response?.data?.message || err.message || "Failed to update product."
+          );
+        } finally {
+          setLoading(false);
+        }
+      });
     },
-    [editProduct, selectedCategory, products, isAdmin]
+    [editProduct, editProductPrice, selectedCategory, products, isAdmin]
   );
 
   const deleteProduct = useCallback(
     async (productCode) => {
       if (!isAdmin) {
-        Alert.alert("Error", "Only admins can delete products.");
+        showConfirm("Error", "Only admins can delete products.");
         return;
       }
-      Alert.alert("Confirm", "Are you sure you want to delete this product?", [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            setLoading(true);
-            try {
-              const token = await AsyncStorage.getItem("token");
-              const apiUrl = await getAPIUrl();
-              await axios.delete(`${apiUrl}/stocks/${selectedCategory.CategoryCode}/${productCode}`, {
-                headers: { Authorization: `Bearer ${token}` },
-              });
-              setProducts(products.filter((prod) => prod.ProductCode !== productCode));
-              Alert.alert("Success", "Product deleted successfully.");
-            } catch (err) {
-              Alert.alert(
-                "Error",
-                err.response?.data?.message || err.message || "Failed to delete product."
-              );
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]);
+      showConfirm("Confirm", "Are you sure you want to delete this product?", async () => {
+        setLoading(true);
+        try {
+          const token = await AsyncStorage.getItem("token");
+          const apiUrl = await getAPIUrl();
+          await axios.delete(`${apiUrl}/products/${selectedCategory.CategoryCode}/${productCode}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          setProducts(products.filter((prod) => prod.ProductCode !== productCode));
+          showConfirm("Success", "Product deleted successfully.");
+        } catch (err) {
+          showConfirm(
+            "Error",
+            err.response?.data?.message || err.message || "Failed to delete product."
+          );
+        } finally {
+          setLoading(false);
+        }
+      });
     },
     [products, selectedCategory, isAdmin]
   );
+
+  const showConfirm = (title, message, onConfirm) => {
+    if (Platform.OS === "web") {
+      if (onConfirm) {
+        if (window.confirm(`${title}: ${message}`)) {
+          onConfirm();
+        }
+      } else {
+        window.alert(`${title}: ${message}`);
+      }
+    } else {
+      if (onConfirm) {
+        Alert.alert(title, message, [
+          { text: "Cancel", style: "cancel" },
+          { text: "OK", onPress: onConfirm },
+        ]);
+      } else {
+        Alert.alert(title, message);
+      }
+    }
+  };
+
+  const formatPrice = (price) => {
+    if (!price && price !== 0) return "₱N/A";
+    return `₱${parseFloat(price).toFixed(2)}`;
+  };
 
   const renderCategoryItem = ({ item }) => (
     <View style={styles.itemContainer}>
@@ -403,20 +413,35 @@ const ManageCategories = () => {
   const renderProductItem = ({ item, index }) => (
     <View style={styles.itemContainer}>
       {isAdmin && editProduct?.ProductCode === item.ProductCode ? (
-        <TextInput
-          style={styles.input}
-          value={editProduct.Product}
-          onChangeText={(text) => setEditProduct({ ...editProduct, Product: text })}
-          autoFocus
-          onFocus={() => {
-            setEditProductIndex(index);
-            setTimeout(() => {
-              productListRef.current?.scrollToIndex({ index, animated: true });
-            }, 100);
-          }}
-        />
+        <>
+          <TextInput
+            style={styles.input}
+            value={editProduct.Product}
+            onChangeText={(text) => setEditProduct({ ...editProduct, Product: text })}
+            autoFocus
+            onFocus={() => {
+              setEditProductIndex(index);
+              setTimeout(() => {
+                if (productListRef.current) {
+                  const element = productListRef.current.querySelector(`[data-index="${index}"]`);
+                  element?.scrollIntoView({ behavior: "smooth", block: "center" });
+                }
+              }, 100);
+            }}
+          />
+          <TextInput
+            style={styles.input}
+            value={editProductPrice || formatPrice(item.SellingPrice)}
+            onChangeText={setEditProductPrice}
+            placeholder="Enter price"
+            keyboardType="numeric"
+          />
+        </>
       ) : (
-        <Text style={styles.itemText}>{item.Product}</Text>
+        <>
+          <Text style={styles.itemText}>{item.Product}</Text>
+          <Text style={styles.itemText}>{formatPrice(item.SellingPrice)}</Text>
+        </>
       )}
       {isAdmin && (
         <View style={styles.buttonGroup}>
@@ -428,6 +453,7 @@ const ManageCategories = () => {
               <TouchableOpacity
                 onPress={() => {
                   setEditProduct(null);
+                  setEditProductPrice("");
                   setEditProductIndex(null);
                 }}
                 disabled={loading}
@@ -436,7 +462,7 @@ const ManageCategories = () => {
               </TouchableOpacity>
             </>
           ) : (
-            <TouchableOpacity onPress={() => setEditProduct(item)} disabled={loading}>
+            <TouchableOpacity onPress={() => { setEditProduct(item); setEditProductPrice(""); }} disabled={loading}>
               <Ionicons name="pencil" size={24} color={loading ? "#B0BEC5" : "#FBC02D"} />
             </TouchableOpacity>
           )}
@@ -450,22 +476,16 @@ const ManageCategories = () => {
 
   const handleBackPress = () => {
     if (editCategory || editProduct) {
-      Alert.alert(
+      showConfirm(
         "Unsaved Changes",
         "You have unsaved changes. Are you sure you want to leave?",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Leave",
-            style: "destructive",
-            onPress: () => {
-              setEditCategory(null);
-              setEditProduct(null);
-              setEditProductIndex(null);
-              navigation.navigate("Home");
-            },
-          },
-        ]
+        () => {
+          setEditCategory(null);
+          setEditProduct(null);
+          setEditProductPrice("");
+          setEditProductIndex(null);
+          navigation.navigate("Home");
+        }
       );
     } else {
       navigation.navigate("Home");
@@ -509,15 +529,13 @@ const ManageCategories = () => {
                   </TouchableOpacity>
                 </View>
               )}
-              <FlatList
-                data={categories}
-                renderItem={renderCategoryItem}
-                keyExtractor={(item) => item.CategoryCode.toString()}
-                contentContainerStyle={styles.listContent}
-                initialNumToRender={10}
-                windowSize={5}
-                removeClippedSubviews={true}
-              />
+              <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.listContent}>
+                {categories.map((item, index) => (
+                  <View key={item.CategoryCode.toString()} data-index={index}>
+                    {renderCategoryItem({ item })}
+                  </View>
+                ))}
+              </ScrollView>
             </>
           ) : (
             <>
@@ -527,6 +545,7 @@ const ManageCategories = () => {
                   setSelectedCategory(null);
                   setProducts([]);
                   setEditProduct(null);
+                  setEditProductPrice("");
                   setEditProductIndex(null);
                 }}
                 disabled={loading}
@@ -547,28 +566,25 @@ const ManageCategories = () => {
                     maxLength={500}
                     placeholderTextColor="#757575"
                   />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Price (e.g., 120.00)"
+                    value={newProductPrice}
+                    onChangeText={setNewProductPrice}
+                    keyboardType="numeric"
+                  />
                   <TouchableOpacity style={styles.addButton} onPress={addProduct} disabled={loading}>
                     <Ionicons name="add" size={24} color={loading ? "#B0BEC5" : "#FFF"} />
                   </TouchableOpacity>
                 </View>
               )}
-              <FlatList
-                ref={productListRef}
-                data={products}
-                renderItem={renderProductItem}
-                keyExtractor={(item) => item.ProductCode.toString()}
-                contentContainerStyle={styles.listContent}
-                keyboardShouldPersistTaps="handled"
-                initialNumToRender={10}
-                windowSize={5}
-                removeClippedSubviews={true}
-                onScrollToIndexFailed={(info) => {
-                  const wait = new Promise((resolve) => setTimeout(resolve, 500));
-                  wait.then(() => {
-                    productListRef.current?.scrollToIndex({ index: info.index, animated: true });
-                  });
-                }}
-              />
+              <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.listContent} ref={productListRef}>
+                {products.map((item, index) => (
+                  <View key={item.ProductCode.toString()} data-index={index}>
+                    {renderProductItem({ item, index })}
+                  </View>
+                ))}
+              </ScrollView>
             </>
           )}
         </>

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, TouchableOpacity, Modal, Alert, Animated } from 'react-native';
+import { View, Text, ActivityIndicator, TouchableOpacity, Modal, Alert, Animated, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -69,23 +69,46 @@ const Home = ({ navigation }) => {
   }, []);
 
   const handleLogout = async () => {
-    setModalVisible(false);
-    Alert.alert(
-      'Logout Confirmation',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Logout',
-          onPress: async () => {
-            await AsyncStorage.removeItem('userData');
-            await AsyncStorage.removeItem('token');
-            navigation.replace('Login');
+    if (Platform.OS === "web") {
+      const confirmed = window.confirm("Are you sure you want to log out?");
+      if (!confirmed) {
+        return; // Exit if user cancels
+      }
+      // Web: Directly log out after confirming
+      try {
+        await AsyncStorage.removeItem('userData');
+        await AsyncStorage.removeItem('token');
+        navigation.replace('Login');
+      } catch (error) {
+        console.error('❌ Error during logout:', error);
+        Alert.alert('Error', 'Failed to log out. Please try again.');
+      }
+      setModalVisible(false);
+    } else {
+      // Mobile: Show Alert.alert
+      setModalVisible(false);
+      Alert.alert(
+        'Logout Confirmation',
+        'Are you sure you want to logout?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Logout',
+            onPress: async () => {
+              try {
+                await AsyncStorage.removeItem('userData');
+                await AsyncStorage.removeItem('token');
+                navigation.replace('Login');
+              } catch (error) {
+                console.error('❌ Error during logout:', error);
+                Alert.alert('Error', 'Failed to log out. Please try again.');
+              }
+            },
+            style: 'destructive',
           },
-          style: 'destructive',
-        },
-      ]
-    );
+        ]
+      );
+    }
   };
 
   const handleNavigateToPOS = () => {
