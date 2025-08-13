@@ -6,7 +6,10 @@ import {
   FlatList,
   ActivityIndicator,
   SafeAreaView,
+  Image,
   Modal,
+  Animated,
+  Easing,
   TextInput,
   Platform,
   Alert,
@@ -18,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getAPIUrl } from "./config";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import styles from "./css/customerOrderScreen.styles";
+import { v4 as uuidv4 } from "uuid";
 
 const CustomerOrderScreen = () => {
   const [categories, setCategories] = useState([]);
@@ -25,14 +29,23 @@ const CustomerOrderScreen = () => {
   const [filteredProducts, setFilteredProducts] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [cart, setCart] = useState({});
+  const [imageErrors, setImageErrors] = useState({});
+  const [showImagePreview, setShowImagePreview] = useState(false);
+  const [previewImageUri, setPreviewImageUri] = useState(null);
+  const [cart, setCart] = useState([]);
   const [showCartModal, setShowCartModal] = useState(false);
-  const [showPendingModal, setShowPendingModal] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [showPendingOrdersModal, setShowPendingOrdersModal] = useState(false);
   const [pendingOrders, setPendingOrders] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [tableTaken, setTableTaken] = useState(false);
+  const [tableStatusMessage, setTableStatusMessage] = useState("");
   const navigation = useNavigation();
   const route = useRoute();
   const insets = useSafeAreaInsets();
+  const [cartAnimation, setCartAnimation] = useState(null);
+  const animatedValue = useRef(new Animated.Value(0)).current;
+  const cartIconRef = useRef(null);
+  const imageRefs = useRef({});
   const searchInputRef = useRef(null);
   const categoryListRef = useRef(null);
   const isDragging = useRef(false);
@@ -40,66 +53,163 @@ const CustomerOrderScreen = () => {
   const scrollOffset = useRef(0);
 
   const tableNo = route.params?.tableNo?.toString() || "";
+  const [deviceId, setDeviceId] = useState(null);
 
   const saveCartToStorage = async (newCart) => {
     try {
-      await AsyncStorage.setItem(`cart_${tableNo}`, JSON.stringify(newCart));
-      console.log("CustomerOrderScreen: Cart saved to AsyncStorage for table:", tableNo);
+      await AsyncStorage.setItem(`cart_${deviceId}_${tableNo}`, JSON.stringify(newCart));
+      console.log("CustomerOrderScreen: Cart saved to AsyncStorage for table:", tableNo, "deviceId:", deviceId);
     } catch (error) {
-      console.warn("CustomerOrderScreen: Failed to save cart to AsyncStorage:", error.message);
+      console.warn("CustomerOrderScreen: Failed to save cart to AsyncStorage:", {
+        message: error.message,
+        tableNo,
+        deviceId,
+      });
     }
   };
 
   const loadCartFromStorage = async () => {
     try {
-      const storedCart = await AsyncStorage.getItem(`cart_${tableNo}`);
+      const storedCart = await AsyncStorage.getItem(`cart_${deviceId}_${tableNo}`);
       if (storedCart) {
         setCart(JSON.parse(storedCart));
-        console.log("CustomerOrderScreen: Cart loaded from AsyncStorage for table:", tableNo);
+        console.log("CustomerOrderScreen: Cart loaded from AsyncStorage for table:", tableNo, "deviceId:", deviceId);
       }
     } catch (error) {
-      console.warn("CustomerOrderScreen: Failed to load cart from AsyncStorage:", error.message);
+      console.warn("CustomerOrderScreen: Failed to load cart from AsyncStorage:", {
+        message: error.message,
+        tableNo,
+        deviceId,
+      });
     }
   };
 
-  const savePendingOrdersToStorage = async (orders) => {
+  const checkTableAvailability = async () => {
+    if (!tableNo || !deviceId) {
+      setTableTaken(true);
+      setTableStatusMessage("Table number and device ID are required.");
+      console.warn("CustomerOrderScreen: Missing tableNo or deviceId for availability check", { tableNo, deviceId });
+      return;
+    }
+
     try {
-      await AsyncStorage.setItem(`pendingOrders_${tableNo}`, JSON.stringify(orders));
-      console.log("CustomerOrderScreen: Pending orders saved to AsyncStorage for table:", tableNo);
+      setLoading(true);
+      const apiUrl = await getAPIUrl();
+      const response = await axios.get(`${apiUrl}/customer-order/check-table/${tableNo}`, {
+        params: { deviceId },
+        timeout: 10000,
+      });
+
+      if (response.data.status === "success") {
+        setTableTaken(false);
+        setTableStatusMessage("");
+        console.log("CustomerOrderScreen: Table is available or owned by deviceId:", deviceId);
+      } else {
+        setTableTaken(true);
+        setTableStatusMessage(response.data.message || "Table number already taken by another device or invalid.");
+        console.log("CustomerOrderScreen: Table check failed:", response.data.message);
+      }
     } catch (error) {
-      console.warn("CustomerOrderScreen: Failed to save pending orders to AsyncStorage:", error.message);
+      console.error("CustomerOrderScreen: Check Table Availability Error:", {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data,
+        tableNo,
+        deviceId,
+      });
+      setTableTaken(true);
+      setTableStatusMessage(
+        error.response?.data?.message || (error.response?.status === 400 ? "Invalid table number." : "Table number already taken by another device.")
+      );
+    } finally {
+      setLoading(false);
+      console.log("CustomerOrderScreen: checkTableAvailability completed, loading:", false);
+    }
+  };
+
+  const fetchPendingOrders = async () => {
+    if (!tableNo || !deviceId) {
+      console.warn("CustomerOrderScreen: Missing tableNo or deviceId for fetching pending orders", { tableNo, deviceId });
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const apiUrl = await getAPIUrl();
+      const cacheBuster = Date.now();
+      const response = await axios.get(`${apiUrl}/customer-order/pending-orders/${tableNo}`, {
+        params: { deviceId, cb: cacheBuster },
+        timeout: 10000,
+      });
+
+      if (response.data.status === "success") {
+        const orders = response.data.orders.map((order) => ({
+          ...order,
+          Done: Number(order.Done),
+        }));
+        setPendingOrders(orders);
+        console.log("CustomerOrderScreen: Fetched pending orders, count:", orders.length, "orders:", JSON.stringify(orders));
+      } else {
+        throw new Error(response.data.message || "Failed to fetch pending orders");
+      }
+    } catch (error) {
+      console.error("CustomerOrderScreen: Fetch Pending Orders Error:", {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data,
+        tableNo,
+        deviceId,
+      });
+      setPendingOrders([]);
+    } finally {
+      setLoading(false);
+      console.log("CustomerOrderScreen: fetchPendingOrders completed, loading:", false);
     }
   };
 
   useEffect(() => {
-    console.log("CustomerOrderScreen: useEffect triggered with route.params:", route.params);
-    console.log("CustomerOrderScreen: tableNo:", tableNo);
-    if (!tableNo) {
-      const message = "Table number is required. Please access via a valid deeplink.";
-      if (Platform.OS === "web") {
-        window.alert(message);
-      } else {
-        Alert.alert("Error", message);
-      }
-      return;
-    }
-    loadCartFromStorage();
-    const loadPendingOrders = async () => {
+    const loadDeviceId = async () => {
       try {
-        const storedOrders = await AsyncStorage.getItem(`pendingOrders_${tableNo}`);
-        if (storedOrders) {
-          const parsedOrders = JSON.parse(storedOrders).filter((o) => o.tableNo === tableNo);
-          setPendingOrders(parsedOrders.map((order) => ({ ...order, status: "pending" })));
-          console.log("CustomerOrderScreen: Loaded pending orders from AsyncStorage:", parsedOrders.length);
+        let storedDeviceId = await AsyncStorage.getItem("deviceId");
+        if (!storedDeviceId) {
+          storedDeviceId = uuidv4();
+          await AsyncStorage.setItem("deviceId", storedDeviceId);
+          console.log("CustomerOrderScreen: Generated new deviceId:", storedDeviceId);
+        } else {
+          console.log("CustomerOrderScreen: Loaded existing deviceId:", storedDeviceId);
         }
+        setDeviceId(storedDeviceId);
       } catch (error) {
-        console.warn("CustomerOrderScreen: Failed to load pending orders from AsyncStorage:", error.message);
+        console.error("CustomerOrderScreen: Failed to load/generate deviceId:", {
+          message: error.message,
+        });
+        setTableTaken(true);
+        setTableStatusMessage("Failed to load device ID.");
       }
     };
-    loadPendingOrders();
-    fetchCategories();
-    fetchPendingOrders();
-  }, [route.params, tableNo]);
+    loadDeviceId();
+  }, []);
+
+  useEffect(() => {
+    console.log("CustomerOrderScreen: useEffect triggered with route.params:", route.params);
+    console.log("CustomerOrderScreen: tableNo:", tableNo, "deviceId:", deviceId);
+    if (!tableNo) {
+      setTableTaken(true);
+      setTableStatusMessage("Table number is required. Please access via a valid deeplink.");
+      if (Platform.OS === "web") window.alert("Table number is required.");
+      else Alert.alert("Error", "Table number is required.");
+      return;
+    }
+    if (deviceId) {
+      checkTableAvailability().then(() => {
+        if (!tableTaken) {
+          loadCartFromStorage();
+          fetchCategories();
+          fetchPendingOrders();
+        }
+      });
+    }
+  }, [route.params, tableNo, deviceId]);
 
   useEffect(() => {
     console.log("CustomerOrderScreen: Search query changed:", searchQuery);
@@ -110,53 +220,9 @@ const CustomerOrderScreen = () => {
         product?.Product?.toLowerCase()?.includes(searchQuery.toLowerCase())
       );
       setFilteredProducts(filtered);
-      console.log("CustomerOrderScreen: Filtered products:", filtered.length);
+      console.log("CustomerOrderScreen: Filtered products count:", filtered.length);
     }
   }, [searchQuery, products]);
-
-  const fetchPendingOrders = async () => {
-    console.log("CustomerOrderScreen: Starting fetchPendingOrders for table:", tableNo);
-    try {
-      setLoading(true);
-      const apiUrl = await getAPIUrl();
-      let token = await AsyncStorage.getItem("token").catch((err) =>
-        console.warn("CustomerOrderScreen: Failed to retrieve token:", err.message)
-      );
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await axios.get(`${apiUrl}/pending-running-bill/pending-orders`, {
-        headers,
-        timeout: 10000,
-      });
-      if (response.data.status === "success" && Array.isArray(response.data.orders)) {
-        const filteredOrders = response.data.orders
-          .filter((o) => o.tableNo === tableNo)
-          .map((order) => ({ ...order, status: order.status || "pending" }));
-        setPendingOrders(filteredOrders);
-        await savePendingOrdersToStorage(filteredOrders);
-        console.log("CustomerOrderScreen: Pending orders set and saved for table", tableNo, "count:", filteredOrders.length);
-      } else {
-        setPendingOrders([]);
-        await savePendingOrdersToStorage([]);
-        console.log("CustomerOrderScreen: No valid orders found in response");
-        throw new Error("Invalid response data from server");
-      }
-    } catch (error) {
-      console.error("CustomerOrderScreen: Fetch Pending Orders Error:", {
-        message: error.message,
-        status: error.response?.status,
-        data: error.response?.data,
-      });
-      const userMessage = "Failed to fetch pending orders.";
-      if (Platform.OS === "web") {
-        window.alert(userMessage);
-      } else {
-        Alert.alert("Error", userMessage);
-      }
-    } finally {
-      setLoading(false);
-      console.log("CustomerOrderScreen: fetchPendingOrders completed, loading:", false);
-    }
-  };
 
   const handleMouseDown = (event) => {
     if (Platform.OS === "web" && categoryListRef.current) {
@@ -166,6 +232,7 @@ const CustomerOrderScreen = () => {
       document.addEventListener("mousemove", handleMouseMove);
       document.addEventListener("mouseup", handleMouseUp);
       event.preventDefault();
+      console.log("CustomerOrderScreen: Mouse down detected for category scroll");
     }
   };
 
@@ -176,6 +243,7 @@ const CustomerOrderScreen = () => {
       categoryListRef.current.scrollToOffset({ offset: newOffset, animated: false });
       scrollOffset.current = newOffset;
       startX.current = event.clientX;
+      console.log("CustomerOrderScreen: Mouse move, new scroll offset:", newOffset);
     }
   };
 
@@ -184,6 +252,7 @@ const CustomerOrderScreen = () => {
       isDragging.current = false;
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
+      console.log("CustomerOrderScreen: Mouse up, dragging ended");
     }
   };
 
@@ -201,22 +270,22 @@ const CustomerOrderScreen = () => {
     setLoading(true);
     try {
       const apiUrl = await getAPIUrl();
-      const response = await axios.get(`${apiUrl}/customer-order/categories`, {
-        timeout: 10000,
-      });
+      const response = await axios.get(`${apiUrl}/customer-order/categories`, { timeout: 10000 });
       if (Array.isArray(response.data.categories)) {
         const categoriesWithCounts = await Promise.all(
           response.data.categories.map(async (category) => {
             try {
-              const productResponse = await axios.get(`${apiUrl}/customer-order/stocks/${category.CategoryCode}`, {
-                timeout: 10000,
-              });
-              return {
-                ...category,
-                itemCount: productResponse.data.products?.length || 0,
-              };
+              const productResponse = await axios.get(
+                `${apiUrl}/customer-order/stocks/${category.CategoryCode}`,
+                { timeout: 10000 }
+              );
+              return { ...category, itemCount: productResponse.data.products?.length || 0 };
             } catch (error) {
-              console.warn(`CustomerOrderScreen: Failed to fetch products for category ${category.CategoryCode}:`, error.message);
+              console.warn(
+                "CustomerOrderScreen: Failed to fetch products for category",
+                category.CategoryCode,
+                error.message
+              );
               return { ...category, itemCount: 0 };
             }
           })
@@ -236,12 +305,8 @@ const CustomerOrderScreen = () => {
         data: error.response?.data,
       });
       setCategories([]);
-      const userMessage = "Failed to fetch categories.";
-      if (Platform.OS === "web") {
-        window.alert(userMessage);
-      } else {
-        Alert.alert("Error", userMessage);
-      }
+      setTableTaken(true);
+      setTableStatusMessage("Failed to fetch categories.");
     } finally {
       setLoading(false);
       console.log("CustomerOrderScreen: fetchCategories completed, loading:", false);
@@ -254,15 +319,12 @@ const CustomerOrderScreen = () => {
     setSelectedCategory(categoryCode);
     try {
       const apiUrl = await getAPIUrl();
-      console.log("CustomerOrderScreen: Fetching products from:", `${apiUrl}/customer-order/stocks/${categoryCode}`);
-      const response = await axios.get(`${apiUrl}/customer-order/stocks/${categoryCode}`, {
-        timeout: 10000,
-      });
-      console.log("CustomerOrderScreen: Raw API response:", response.data);
+      const response = await axios.get(`${apiUrl}/customer-order/stocks/${categoryCode}`, { timeout: 10000 });
       if (response.data.status === "success" && Array.isArray(response.data.products)) {
-        const productsWithPrices = await Promise.all(
+        const productsWithPricesAndImages = await Promise.all(
           response.data.products.map(async (product) => {
             let price = 100;
+            let imageUrl = null;
             try {
               const priceResponse = await axios.get(
                 `${apiUrl}/customer-order/stocks/${categoryCode}/${product.ProductCode}/price`,
@@ -270,19 +332,33 @@ const CustomerOrderScreen = () => {
               );
               price = priceResponse.data.price || 100;
             } catch (error) {
-              console.warn(`CustomerOrderScreen: Failed to fetch price for product ${product.ProductCode}:`, error.message);
+              console.warn("CustomerOrderScreen: Failed to fetch price for product", product.ProductCode, error.message);
             }
-            return {
-              ...product,
-              price,
-            };
+            try {
+              const extensions = ["jpg", "png", "jpeg"];
+              const cacheBuster = Date.now();
+              for (const ext of extensions) {
+                const potentialImageUrl = `${apiUrl}/Uploads/product_${product.ProductCode}.${ext}?cb=${cacheBuster}`;
+                try {
+                  const imageResponse = await axios.head(potentialImageUrl, { timeout: 5000 });
+                  if (imageResponse.status === 200) {
+                    imageUrl = potentialImageUrl;
+                    break;
+                  }
+                } catch (e) {
+                  console.warn("CustomerOrderScreen: Image not found for", product.ProductCode, ext);
+                }
+              }
+            } catch (error) {
+              console.warn("CustomerOrderScreen: Failed to fetch image for product", product.ProductCode, error.message);
+            }
+            return { ...product, price, imageUrl };
           })
         );
-        setProducts(productsWithPrices);
-        setFilteredProducts(productsWithPrices);
-        console.log("CustomerOrderScreen: Successfully fetched products:", productsWithPrices.length);
+        setProducts(productsWithPricesAndImages);
+        setFilteredProducts(productsWithPricesAndImages);
+        console.log("CustomerOrderScreen: Successfully fetched products count:", productsWithPricesAndImages.length);
       } else {
-        console.log("CustomerOrderScreen: Invalid products response structure:", response.data);
         throw new Error("Invalid products response: Expected 'products' array with status 'success'");
       }
     } catch (error) {
@@ -290,17 +366,12 @@ const CustomerOrderScreen = () => {
         message: error.message,
         status: error.response?.status,
         data: error.response?.data,
+        categoryCode,
       });
       setProducts([]);
       setFilteredProducts([]);
-      const userMessage = error.message.includes("Network Error") || error.code === "ECONNABORTED"
-        ? "Failed to connect to the server. Please check your network or API URL."
-        : "Failed to fetch products. Please try again later.";
-      if (Platform.OS === "web") {
-        window.alert(userMessage);
-      } else {
-        Alert.alert("Error", userMessage);
-      }
+      setTableTaken(true);
+      setTableStatusMessage("Failed to fetch products.");
     } finally {
       setLoading(false);
       console.log("CustomerOrderScreen: fetchProducts completed, loading:", false);
@@ -308,17 +379,54 @@ const CustomerOrderScreen = () => {
   };
 
   const addToCart = (product, productCode) => {
+    if (tableTaken) return;
     console.log("CustomerOrderScreen: Adding to cart:", product.Product, productCode);
+    if (imageRefs.current[productCode] && product.imageUrl && !imageErrors[productCode] && cartIconRef.current) {
+      imageRefs.current[productCode].measure((x, y, width, height, pageX, pageY) => {
+        cartIconRef.current.measure((cx, cy, cWidth, cHeight, cPageX, cPageY) => {
+          const endXOffset = -10;
+          const endYOffset = -20;
+          const adjustedEndX = cPageX + endXOffset;
+          const adjustedEndY = cPageY + endYOffset;
+
+          const animation = Animated.timing(animatedValue, {
+            toValue: 1,
+            duration: 600,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: Platform.OS !== "web",
+          });
+
+          setCartAnimation({ product, startX: pageX, startY: pageY, endX: adjustedEndX, endY: adjustedEndY });
+          animation.start(() => {
+            setCartAnimation(null);
+            animatedValue.setValue(0);
+          });
+        });
+      });
+    }
+
     setCart((prevCart) => {
-      const existingQty = prevCart[product.ProductCode]?.quantity || 0;
-      const newCart = {
-        ...prevCart,
-        [product.ProductCode]: {
-          ...product,
-          quantity: existingQty + 1,
-        },
-      };
+      const existingItem = prevCart.find((item) => item.ProductCode === productCode);
+      let newCart;
+      if (existingItem) {
+        newCart = prevCart.map((item) =>
+          item.ProductCode === productCode
+            ? { ...item, quantity: (item.quantity || 0) + 1 }
+            : item
+        );
+      } else {
+        newCart = [
+          ...prevCart,
+          {
+            id: uuidv4(),
+            ...product,
+            ProductCode: productCode,
+            quantity: 1,
+          },
+        ];
+      }
       saveCartToStorage(newCart);
+      console.log("CustomerOrderScreen: Updated cart, items:", newCart.length);
       return newCart;
     });
 
@@ -333,87 +441,48 @@ const CustomerOrderScreen = () => {
     }
   };
 
-  const removeFromCart = (productCode) => {
-    console.log("CustomerOrderScreen: Removing from cart:", productCode);
+  const removeFromCart = (cartItemId) => {
+    if (tableTaken) return;
+    console.log("CustomerOrderScreen: Removing from cart, id:", cartItemId);
     setCart((prevCart) => {
-      const newCart = { ...prevCart };
-      delete newCart[productCode];
+      const newCart = prevCart.filter((item) => item.id !== cartItemId);
       saveCartToStorage(newCart);
       return newCart;
     });
     const message = "Item removed from cart!";
-    if (Platform.OS === "web") {
-      window.alert(message);
-    } else {
-      Alert.alert("Success", message);
-    }
+    if (Platform.OS === "web") window.alert(message);
+    else Alert.alert("Success", message);
   };
 
-  const clearCart = () => {
-    console.log("CustomerOrderScreen: Clearing cart");
-    if (Platform.OS === "web") {
-      if (window.confirm("Clear all items from cart?")) {
-        setCart({});
-        saveCartToStorage({});
-        window.alert("Cart cleared!");
-      }
-    } else {
-      Alert.alert(
-        "Clear Cart",
-        "Remove all items from cart?",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Clear",
-            style: "destructive",
-            onPress: () => {
-              setCart({});
-              saveCartToStorage({});
-              Alert.alert("Success", "Cart cleared!");
-            },
-          },
-        ]
-      );
-    }
-  };
-
-  const updateQuantity = (productCode, newQuantity) => {
-    console.log("CustomerOrderScreen: Updating quantity for", productCode, "to", newQuantity);
+  const updateQuantity = (cartItemId, newQuantity) => {
+    if (tableTaken) return;
+    console.log("CustomerOrderScreen: Updating quantity for id:", cartItemId, "to", newQuantity);
     if (newQuantity < 1) {
-      removeFromCart(productCode);
+      removeFromCart(cartItemId);
       return;
     }
     setCart((prevCart) => {
-      const newCart = {
-        ...prevCart,
-        [productCode]: {
-          ...prevCart[productCode],
-          quantity: newQuantity,
-        },
-      };
+      const newCart = prevCart.map((item) =>
+        item.id === cartItemId ? { ...item, quantity: newQuantity } : item
+      );
       saveCartToStorage(newCart);
       return newCart;
     });
   };
 
   const submitCart = async () => {
+    if (tableTaken) return;
     console.log("CustomerOrderScreen: Submitting cart:", cart);
-    if (Object.keys(cart).length === 0) {
+    if (cart.length === 0) {
       const message = "Cart is empty.";
-      if (Platform.OS === "web") {
-        window.alert(message);
-      } else {
-        Alert.alert("Error", message);
-      }
+      if (Platform.OS === "web") window.alert(message);
+      else Alert.alert("Error", message);
       return;
     }
-    if (!tableNo) {
-      const message = "Table number is required. Please access via a valid deeplink.";
-      if (Platform.OS === "web") {
-        window.alert(message);
-      } else {
-        Alert.alert("Error", message);
-      }
+    if (!tableNo || !deviceId) {
+      const message = "Table number and device ID are required.";
+      if (Platform.OS === "web") window.alert(message);
+      else Alert.alert("Error", message);
       return;
     }
 
@@ -421,14 +490,15 @@ const CustomerOrderScreen = () => {
       setLoading(true);
       const orderData = {
         tableNo,
-        cart: Object.values(cart).map((item) => ({
-          productCode: item.ProductCode?.toString() || "",
-          quantity: parseFloat(item.quantity) || 1,
+        cart: cart.map((item) => ({
+          productCode: item.ProductCode?.toString(),
+          quantity: item.quantity || 1,
           price: parseFloat(item.price) || 100,
         })),
         notes: "",
         dineIn: true,
         takeOut: false,
+        deviceId,
       };
 
       if (orderData.cart.some((item) => !item.productCode || item.quantity <= 0 || isNaN(item.price))) {
@@ -436,349 +506,47 @@ const CustomerOrderScreen = () => {
       }
 
       const apiUrl = await getAPIUrl();
-      let token = await AsyncStorage.getItem("token").catch((err) =>
-        console.warn("CustomerOrderScreen: Failed to retrieve token for submitCart:", err.message)
-      );
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const response = await axios.post(`${apiUrl}/customer-order/accept`, orderData, {
-        headers,
         timeout: 10000,
       });
       if (response.data.status !== "success" || !response.data.order) {
         throw new Error(response.data.message || "Failed to place order.");
       }
 
-      const newOrder = {
-        POSCode: response.data.order.POSCode,
-        InvoiceNo: response.data.order.InvoiceNo,
-        tableNo,
-        items: Object.values(cart).map((item) => ({
-          ProductCode: item.ProductCode,
-          productName: item.Product,
-          quantity: parseFloat(item.quantity),
-          price: parseFloat(item.price),
-        })),
-        status: response.data.order.status || "pending",
-        timestamp: new Date().toISOString(),
-      };
-      const storedOrders = await AsyncStorage.getItem(`pendingOrders_${tableNo}`).catch((err) =>
-        console.warn("CustomerOrderScreen: Failed to load stored orders:", err.message)
-      );
-      const orders = storedOrders ? JSON.parse(storedOrders) : [];
-      orders.push(newOrder);
-      await savePendingOrdersToStorage(orders);
-
-      setCart({});
-      await AsyncStorage.removeItem(`cart_${tableNo}`);
-      await fetchPendingOrders();
+      setCart([]);
+      await AsyncStorage.removeItem(`cart_${deviceId}_${tableNo}`);
       setShowCartModal(false);
-      const message = "Order placed successfully! You can view it in Pending Orders.";
+      await fetchPendingOrders();
+      const message = "Order placed successfully!";
       if (Platform.OS === "web") {
-        window.alert(message);
+        if (window.confirm(message + " View pending orders?")) setShowPendingOrdersModal(true);
       } else {
-        Alert.alert("Success", message);
+        Alert.alert("Success", message, [
+          { text: "Close", style: "cancel" },
+          { text: "View Pending Orders", onPress: () => setShowPendingOrdersModal(true) },
+        ]);
       }
     } catch (error) {
       console.error("CustomerOrderScreen: Submit Cart Error:", {
         message: error.message,
         status: error.response?.status,
         data: error.response?.data,
+        tableNo,
+        deviceId,
       });
       const userMessage =
-        error.message.includes("Network Error") || error.code === "ECONNABORTED"
-          ? "Failed to connect to the server. Please check your network or API URL."
-          : error.response?.status === 401
-          ? "Authentication error. Please try again or contact support."
+        error.response?.status === 403
+          ? error.response.data.message
+          : error.response?.status === 400
+          ? "Invalid table number or order data."
+          : error.message.includes("Network Error") || error.code === "ECONNABORTED"
+          ? "Failed to connect to the server."
           : error.response?.data?.message || "Error placing order.";
-      if (Platform.OS === "web") {
-        window.alert(userMessage);
-      } else {
-        Alert.alert("Error", userMessage);
-      }
+      if (Platform.OS === "web") window.alert(userMessage);
+      else Alert.alert("Error", userMessage);
     } finally {
       setLoading(false);
       console.log("CustomerOrderScreen: submitCart completed, loading:", false);
-    }
-  };
-
-  const cancelPendingOrder = async (posCode, invoiceNo) => {
-    console.log("CustomerOrderScreen: Canceling pending order:", { posCode, invoiceNo });
-    if (!posCode || !invoiceNo || !tableNo) {
-      console.error("CustomerOrderScreen: Invalid posCode, invoiceNo, or tableNo", { posCode, invoiceNo, tableNo });
-      const userMessage = "Invalid order information.";
-      if (Platform.OS === "web") {
-        window.alert(userMessage);
-      } else {
-        Alert.alert("Error", userMessage);
-      }
-      return;
-    }
-
-    const order = pendingOrders.find((o) => o.POSCode === posCode && o.InvoiceNo === invoiceNo);
-    if (!order || order.tableNo !== tableNo) {
-      console.error("CustomerOrderScreen: Order not found or table mismatch", { posCode, invoiceNo, tableNo });
-      const userMessage = "Cannot cancel order: Order not found or belongs to a different table.";
-      if (Platform.OS === "web") {
-        window.alert(userMessage);
-      } else {
-        Alert.alert("Error", userMessage);
-      }
-      return;
-    }
-
-    let confirmed;
-    if (Platform.OS === "web") {
-      confirmed = window.confirm(`Cancel Order ID ${posCode} (Invoice No: ${invoiceNo})?`);
-    } else {
-      confirmed = await new Promise((resolve) =>
-        Alert.alert(
-          "Cancel Order",
-          `Cancel Order ID ${posCode} (Invoice No: ${invoiceNo})?`,
-          [
-            { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-            { text: "Confirm", style: "destructive", onPress: () => resolve(true) },
-          ]
-        )
-      );
-    }
-    if (!confirmed) return;
-
-    try {
-      setLoading(true);
-      const apiUrl = await getAPIUrl();
-      let token = await AsyncStorage.getItem("token").catch((err) =>
-        console.warn("CustomerOrderScreen: Failed to retrieve token for delete:", err.message)
-      );
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await axios.delete(`${apiUrl}/pending-running-bill/pending-orders/${posCode}/${invoiceNo}`, {
-        headers,
-        timeout: 10000,
-      });
-      if (response.data.status !== "success") {
-        throw new Error(response.data.message || "Failed to cancel order.");
-      }
-
-      const storedOrders = await AsyncStorage.getItem(`pendingOrders_${tableNo}`).catch((err) =>
-        console.warn("CustomerOrderScreen: Failed to load stored orders:", err.message)
-      );
-      if (storedOrders) {
-        let orders = JSON.parse(storedOrders);
-        orders = orders.filter((o) => o.POSCode !== posCode || o.InvoiceNo !== invoiceNo);
-        await savePendingOrdersToStorage(orders);
-      }
-      await fetchPendingOrders();
-      const message = `Order ID ${posCode} canceled successfully!`;
-      if (Platform.OS === "web") {
-        window.alert(message);
-      } else {
-        Alert.alert("Success", message);
-      }
-    } catch (error) {
-      console.error("CustomerOrderScreen: Cancel Pending Order Error:", {
-        message: error.message,
-        status: error.response?.status,
-        data: error.response?.data,
-      });
-      const userMessage =
-        error.message.includes("Network Error") || error.code === "ECONNABORTED"
-          ? "Failed to connect to the server. Please check your network or API URL."
-          : error.response?.status === 404
-          ? "Order not found or already canceled."
-          : error.response?.data?.message || "Failed to cancel order.";
-      if (Platform.OS === "web") {
-        window.alert(userMessage);
-      } else {
-        Alert.alert("Error", userMessage);
-      }
-    } finally {
-      setLoading(false);
-      console.log("CustomerOrderScreen: cancelPendingOrder completed, loading:", false);
-    }
-  };
-
-  const cancelPendingItem = async (posCode, productCode) => {
-    console.log("CustomerOrderScreen: Canceling pending item:", { posCode, productCode });
-    if (!posCode || !productCode || !tableNo) {
-      console.error("CustomerOrderScreen: Invalid posCode, productCode, or tableNo", { posCode, productCode, tableNo });
-      const userMessage = "Invalid order or product information.";
-      if (Platform.OS === "web") {
-        window.alert(userMessage);
-      } else {
-        Alert.alert("Error", userMessage);
-      }
-      return;
-    }
-
-    const order = pendingOrders.find((o) => o.POSCode === posCode);
-    if (!order || order.tableNo !== tableNo) {
-      console.error("CustomerOrderScreen: Order not found or table mismatch", { posCode, tableNo });
-      const userMessage = "Cannot cancel item: Order not found or belongs to a different table.";
-      if (Platform.OS === "web") {
-        window.alert(userMessage);
-      } else {
-        Alert.alert("Error", userMessage);
-      }
-      return;
-    }
-
-    const product = order.items.find((item) => item.ProductCode === productCode);
-    const productName = product?.productName || "Unknown Product";
-
-    let confirmed;
-    if (Platform.OS === "web") {
-      confirmed = window.confirm(`Cancel ${productName} from the pending order?`);
-    } else {
-      confirmed = await new Promise((resolve) =>
-        Alert.alert(
-          "Cancel Item",
-          `Cancel ${productName} from the pending order?`,
-          [
-            { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-            { text: "Confirm", style: "destructive", onPress: () => resolve(true) },
-          ]
-        )
-      );
-    }
-    if (!confirmed) return;
-
-    try {
-      setLoading(true);
-      const apiUrl = await getAPIUrl();
-      let token = await AsyncStorage.getItem("token").catch((err) =>
-        console.warn("CustomerOrderScreen: Failed to retrieve token for delete:", err.message)
-      );
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await axios.delete(`${apiUrl}/pending-running-bill/pending-orders/${posCode}/${productCode}`, {
-        headers,
-        timeout: 10000,
-      });
-      if (response.data.status !== "success") {
-        throw new Error(response.data.message || "Failed to cancel item.");
-      }
-
-      const storedOrders = await AsyncStorage.getItem(`pendingOrders_${tableNo}`).catch((err) =>
-        console.warn("CustomerOrderScreen: Failed to load stored orders:", err.message)
-      );
-      if (storedOrders) {
-        let orders = JSON.parse(storedOrders);
-        orders = orders.map((o) =>
-          o.POSCode === posCode
-            ? { ...o, items: o.items.filter((item) => item.ProductCode !== productCode) }
-            : o
-        ).filter((o) => o.items.length > 0);
-        await savePendingOrdersToStorage(orders);
-      }
-      await fetchPendingOrders();
-      const message = `${productName} canceled successfully!`;
-      if (Platform.OS === "web") {
-        window.alert(message);
-      } else {
-        Alert.alert("Success", message);
-      }
-    } catch (error) {
-      console.error("CustomerOrderScreen: Cancel Pending Item Error:", {
-        message: error.message,
-        status: error.response?.status,
-        data: error.response?.data,
-      });
-      const userMessage =
-        error.message.includes("Network Error") || error.code === "ECONNABORTED"
-          ? "Failed to connect to the server. Please check your network or API URL."
-          : error.response?.status === 404
-          ? "Order or item not found or already deleted."
-          : error.response?.data?.message || "Failed to cancel item.";
-      if (Platform.OS === "web") {
-        window.alert(userMessage);
-      } else {
-        Alert.alert("Error", userMessage);
-      }
-    } finally {
-      setLoading(false);
-      console.log("CustomerOrderScreen: cancelPendingItem completed, loading:", false);
-    }
-  };
-
-  const cancelAllPendingOrders = async (tableNoToCancel) => {
-    console.log("CustomerOrderScreen: Canceling all pending orders for table:", tableNoToCancel);
-    if (tableNoToCancel !== tableNo) {
-      console.log("CustomerOrderScreen: Table number mismatch, cancellation aborted");
-      const message = "Cannot cancel orders for a different table.";
-      if (Platform.OS === "web") {
-        window.alert(message);
-      } else {
-        Alert.alert("Error", message);
-      }
-      return;
-    }
-
-    const tableOrders = pendingOrders.filter((order) => order.tableNo === tableNoToCancel);
-    if (tableOrders.length === 0) {
-      const message = `No pending orders to cancel for Table ${tableNoToCancel}.`;
-      if (Platform.OS === "web") {
-        window.alert(message);
-      } else {
-        Alert.alert("Info", message);
-      }
-      return;
-    }
-
-    let confirmed;
-    if (Platform.OS === "web") {
-      confirmed = window.confirm(`Cancel all pending orders for Table ${tableNoToCancel}?`);
-    } else {
-      confirmed = await new Promise((resolve) =>
-        Alert.alert(
-          "Cancel All Pending Orders",
-          `Cancel all pending orders for Table ${tableNoToCancel}?`,
-          [
-            { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-            { text: "Confirm", style: "destructive", onPress: () => resolve(true) },
-          ]
-        )
-      );
-    }
-    if (!confirmed) return;
-
-    try {
-      setLoading(true);
-      const apiUrl = await getAPIUrl();
-      let token = await AsyncStorage.getItem("token").catch((err) =>
-        console.warn("CustomerOrderScreen: Failed to retrieve token for delete:", err.message)
-      );
-      await Promise.all(
-        tableOrders.map((order) =>
-          axios.delete(`${apiUrl}/pending-running-bill/pending-orders/${order.POSCode}/${order.InvoiceNo}`, {
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
-            timeout: 10000,
-          })
-        )
-      );
-      await savePendingOrdersToStorage([]);
-      await fetchPendingOrders();
-      const message = `All pending orders for Table ${tableNoToCancel} canceled successfully!`;
-      if (Platform.OS === "web") {
-        window.alert(message);
-      } else {
-        Alert.alert("Success", message);
-      }
-    } catch (error) {
-      console.error("CustomerOrderScreen: Cancel All Pending Orders Error:", {
-        message: error.message,
-        status: error.response?.status,
-        data: error.response?.data,
-      });
-      const userMessage =
-        error.message.includes("Network Error") || error.code === "ECONNABORTED"
-          ? "Failed to connect to the server. Please check your network or API URL."
-          : error.response?.data?.message || "Failed to cancel pending orders.";
-      if (Platform.OS === "web") {
-        window.alert(userMessage);
-      } else {
-        Alert.alert("Error", userMessage);
-      }
-    } finally {
-      setLoading(false);
-      console.log("CustomerOrderScreen: cancelAllPendingOrders completed, loading:", false);
     }
   };
 
@@ -791,52 +559,47 @@ const CustomerOrderScreen = () => {
     }
   };
 
-  const getTotalPendingItems = (tableNo) => {
-    const tableOrders = pendingOrders.filter((order) => order.tableNo === tableNo);
-    const total = tableOrders.reduce((total, order) => {
-      return total + (order.items || []).reduce((sum, item) => sum + (item.quantity || 0), 0);
-    }, 0);
-    console.log("CustomerOrderScreen: Calculated total items for table", tableNo, ":", total);
+  const getTotal = () => {
+    const total = cart
+      .reduce((total, item) => total + (item.price || 0) * (item.quantity || 0), 0)
+      .toFixed(2);
+    console.log("CustomerOrderScreen: Calculated cart total:", total);
     return total;
   };
 
-  const getTableTotal = (tableNo) => {
-    const tableOrders = pendingOrders.filter((order) => order.tableNo === tableNo);
-    const total = tableOrders.reduce((total, order) => {
-      return total + (order.items || []).reduce((sum, item) => sum + (item.price || 0) * (item.quantity || 0), 0);
-    }, 0).toFixed(2);
-    console.log("CustomerOrderScreen: Calculated total cost for table", tableNo, ":", total);
-    return total;
+  const getTotalPendingQuantity = () => {
+    const totalQty = pendingOrders.reduce((sum, item) => {
+      return item.Done === 0 ? sum + (parseFloat(item.Qty) || 0) : sum;
+    }, 0);
+    console.log("CustomerOrderScreen: Calculated total pending quantity:", totalQty);
+    return totalQty;
+  };
+
+  const getTotalAcceptedDue = () => {
+    const totalDue = pendingOrders
+      .reduce((sum, item) => {
+        return item.Done === 1 ? sum + (parseFloat(item.Price) * parseFloat(item.Qty) || 0) : sum;
+      }, 0)
+      .toFixed(2);
+    console.log("CustomerOrderScreen: Calculated total accepted due:", totalDue);
+    return totalDue;
   };
 
   const renderCategory = ({ item }) => (
     <TouchableOpacity
-      style={[
-        styles.categoryItem,
-        selectedCategory === item.CategoryCode && styles.categoryItemSelected,
-      ]}
+      style={[styles.categoryItem, selectedCategory === item.CategoryCode && styles.categoryItemSelected]}
       onPress={() => fetchProducts(item.CategoryCode)}
-      disabled={loading}
+      disabled={loading || tableTaken}
     >
       <Ionicons
         name={item.Category === "All Menu" ? "menu" : "restaurant-outline"}
         size={20}
         color={selectedCategory === item.CategoryCode ? "#FFFFFF" : "#3D2C29"}
       />
-      <Text
-        style={[
-          styles.categoryText,
-          selectedCategory === item.CategoryCode && styles.categoryTextSelected,
-        ]}
-      >
+      <Text style={[styles.categoryText, selectedCategory === item.CategoryCode && styles.categoryTextSelected]}>
         {item.Category || "Unnamed Category"}
       </Text>
-      <Text
-        style={[
-          styles.categoryCount,
-          selectedCategory === item.CategoryCode && styles.categoryCountSelected,
-        ]}
-      >
+      <Text style={[styles.categoryCount, selectedCategory === item.CategoryCode && styles.categoryCountSelected]}>
         {item.itemCount} {item.itemCount === 1 ? "item" : "items"}
       </Text>
     </TouchableOpacity>
@@ -844,16 +607,40 @@ const CustomerOrderScreen = () => {
 
   const renderProduct = ({ item }) => (
     <View style={styles.productCard}>
-      <View style={styles.productImagePlaceholder}>
-        <Text style={styles.placeholderText}>No Image</Text>
-      </View>
+      <TouchableOpacity
+        onPress={() => {
+          if (item.imageUrl && !imageErrors[item.ProductCode]) {
+            setPreviewImageUri(item.imageUrl);
+            setShowImagePreview(true);
+            console.log("CustomerOrderScreen: Previewing image for product:", item.Product);
+          }
+        }}
+        disabled={!item.imageUrl || imageErrors[item.ProductCode] || tableTaken}
+      >
+        {item.imageUrl && !imageErrors[item.ProductCode] ? (
+          <Image
+            ref={(ref) => (imageRefs.current[item.ProductCode] = ref)}
+            source={{ uri: item.imageUrl }}
+            style={styles.productImage}
+            resizeMode="cover"
+            onError={() => {
+              console.warn("CustomerOrderScreen: Image load error for product:", item.ProductCode);
+              setImageErrors((prev) => ({ ...prev, [item.ProductCode]: true }));
+            }}
+          />
+        ) : (
+          <View style={styles.productImagePlaceholder}>
+            <Text style={styles.placeholderText}>No Image</Text>
+          </View>
+        )}
+      </TouchableOpacity>
       <Text style={styles.productName}>{item.Product || "Unnamed Product"}</Text>
       <Text style={styles.productPrice}>₱{(item.price || 0).toFixed(2)}</Text>
       <View style={styles.quantityContainer}>
         <TouchableOpacity
           style={styles.quantityButton}
           onPress={() => addToCart(item, item.ProductCode)}
-          disabled={loading}
+          disabled={loading || tableTaken}
         >
           <Text style={styles.quantityButtonText}>Add to Cart</Text>
         </TouchableOpacity>
@@ -868,23 +655,23 @@ const CustomerOrderScreen = () => {
         <Text style={styles.cartItemPrice}>₱{(item.price * item.quantity).toFixed(2)}</Text>
         <TouchableOpacity
           style={styles.quantityButton}
-          onPress={() => updateQuantity(item.ProductCode, item.quantity - 1)}
-          disabled={loading}
+          onPress={() => updateQuantity(item.id, item.quantity - 1)}
+          disabled={loading || tableTaken}
         >
           <Text style={styles.quantityButtonText}>-</Text>
         </TouchableOpacity>
         <Text style={styles.quantityText}>{item.quantity}</Text>
         <TouchableOpacity
           style={styles.quantityButton}
-          onPress={() => updateQuantity(item.ProductCode, item.quantity + 1)}
-          disabled={loading}
+          onPress={() => updateQuantity(item.id, item.quantity + 1)}
+          disabled={loading || tableTaken}
         >
           <Text style={styles.quantityButtonText}>+</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.quantityButton, styles.removeButton]}
-          onPress={() => removeFromCart(item.ProductCode)}
-          disabled={loading}
+          onPress={() => removeFromCart(item.id)}
+          disabled={loading || tableTaken}
         >
           <Text style={styles.quantityButtonText}>Remove</Text>
         </TouchableOpacity>
@@ -892,77 +679,20 @@ const CustomerOrderScreen = () => {
     </View>
   );
 
-  const renderPendingItem = ({ item }, posCode) => (
+  const renderPendingOrderItem = ({ item }) => (
     <View style={styles.cartItem}>
-      <Text style={styles.cartItemName}>{item.productName} (x{item.quantity})</Text>
+      <Text style={styles.cartItemName}>
+        {item.ProductName} (x{item.Qty}) - POSCode: {item.POSCode}
+      </Text>
       <View style={styles.quantityControl}>
-        <Text style={styles.cartItemPrice}>₱{(item.price * item.quantity).toFixed(2)}</Text>
-        <TouchableOpacity
-          style={[styles.quantityButton, styles.removeButton]}
-          onPress={() => cancelPendingItem(posCode, item.ProductCode)}
-          disabled={loading}
-        >
-          <Text style={styles.quantityButtonText}>Cancel</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
-  const renderPendingOrder = ({ item }) => (
-    <View style={styles.pendingOrderContainer}>
-      <View style={styles.pendingOrderHeader}>
-        <Text style={styles.pendingOrderText}>
-          Order ID: {item.POSCode} (Invoice No: {item.InvoiceNo}, {item.items.length} item{item.items.length !== 1 ? "s" : ""}, Status: {item.status})
+        <Text style={styles.cartItemPrice}>₱{(item.Price * item.Qty).toFixed(2)}</Text>
+        <Text style={styles.quantityText}>Notes: {item.Notes || "None"}</Text>
+        <Text style={[styles.quantityText, item.Done === 1 ? styles.statusAccepted : styles.statusPending]}>
+          Status: {item.Done === 1 ? "Accepted" : "Pending"}
         </Text>
-        <TouchableOpacity
-          style={[styles.quantityButton, styles.cancelOrderButton]}
-          onPress={() => cancelPendingOrder(item.POSCode, item.InvoiceNo)}
-          disabled={loading}
-        >
-          <Text style={styles.quantityButtonText}>Cancel Order</Text>
-        </TouchableOpacity>
       </View>
-      <FlatList
-        data={item.items}
-        renderItem={(props) => renderPendingItem(props, item.POSCode)}
-        keyExtractor={(item) => item.ProductCode?.toString() || Math.random().toString()}
-        contentContainerStyle={styles.cartList}
-      />
     </View>
   );
-
-  const renderTableSection = ({ item: tableNo }) => (
-    <View style={styles.tableSection}>
-      <View style={styles.tableHeader}>
-        <Text style={styles.tableNoText}>Table {tableNo}</Text>
-        <Text style={styles.tableTotalText}>Total: ₱{getTableTotal(tableNo)}</Text>
-        <TouchableOpacity
-          style={[styles.quantityButton, styles.cancelAllButton]}
-          onPress={() => cancelAllPendingOrders(tableNo)}
-          disabled={loading}
-        >
-          <Text style={styles.quantityButtonText}>Cancel All</Text>
-        </TouchableOpacity>
-      </View>
-      <FlatList
-        data={pendingOrders.filter((order) => order.tableNo === tableNo)}
-        renderItem={renderPendingOrder}
-        keyExtractor={(item) => item.POSCode?.toString() || Math.random().toString()}
-        contentContainerStyle={styles.cartList}
-      />
-    </View>
-  );
-
-  const getTotal = () => {
-    const total = Object.values(cart).reduce(
-      (total, item) => total + (item.price || 0) * (item.quantity || 0),
-      0
-    ).toFixed(2);
-    console.log("CustomerOrderScreen: Calculated cart total:", total);
-    return total;
-  };
-
-  const uniqueTableNos = tableNo && pendingOrders.some((order) => order.tableNo === tableNo) ? [tableNo] : [];
 
   return (
     <SafeAreaView
@@ -976,154 +706,300 @@ const CustomerOrderScreen = () => {
         },
       ]}
     >
-      <View style={styles.topNav}>
-        <TouchableOpacity style={styles.navItem} onPress={() => setShowCartModal(true)} disabled={loading}>
-          <Ionicons name="cart-outline" size={20} color="#3D2C29" />
-          <Text style={styles.navText}>Cart ({Object.keys(cart).length})</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => setShowPendingModal(true)} disabled={loading}>
-          <Ionicons name="list-outline" size={20} color="#3D2C29" />
-          <Text style={styles.navText}>Pending ({getTotalPendingItems(tableNo)})</Text>
-        </TouchableOpacity>
-      </View>
-      {tableNo && (
-        <View style={styles.tableNoContainer}>
-          <Text style={styles.tableNoText}>Table Number: {tableNo}</Text>
+      {tableTaken ? (
+        <View style={styles.tableTakenContainer}>
+          <Text style={styles.tableTakenText}>{tableStatusMessage}</Text>
         </View>
-      )}
-      <View style={styles.searchContainer}>
-        <TextInput
-          ref={searchInputRef}
-          style={styles.searchInput}
-          placeholder="Search products..."
-          placeholderTextColor="#6B5E4A"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          autoCapitalize="none"
-          returnKeyType="search"
-          editable={!loading}
-        />
-        {searchQuery.length > 0 && (
-          <TouchableOpacity style={styles.clearSearchButton} onPress={clearSearch} disabled={loading}>
-            <Ionicons name="close-circle" size={20} color="#6B5E4A" />
-          </TouchableOpacity>
-        )}
-      </View>
-      <View style={styles.categoryContainer}>
-        <FlatList
-          ref={categoryListRef}
-          data={categories}
-          renderItem={renderCategory}
-          keyExtractor={(item) => item.CategoryCode?.toString() || Math.random().toString()}
-          horizontal
-          contentContainerStyle={styles.categoryList}
-          showsHorizontalScrollIndicator={false}
-          ListEmptyComponent={<Text style={styles.noDataText}>No categories available.</Text>}
-          onScroll={(event) => {
-            scrollOffset.current = event.nativeEvent.contentOffset.x;
-          }}
-          onMouseDown={handleMouseDown}
-        />
-      </View>
-      {selectedCategory && (
-        <FlatList
-          data={filteredProducts}
-          renderItem={renderProduct}
-          keyExtractor={(item) => item.ProductCode?.toString() || Math.random().toString()}
-          contentContainerStyle={styles.productContainer}
-          numColumns={2}
-          ListEmptyComponent={<Text style={styles.noDataText}>No products found.</Text>}
-        />
-      )}
-      {loading && <ActivityIndicator size="large" color="#F28C38" style={styles.loading} />}
-      <Modal
-        visible={showCartModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowCartModal(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.cartModalContainer}>
-            <Text style={styles.cartTitle}>Your Cart</Text>
-            {tableNo && <Text style={styles.tableNoText}>Table Number: {tableNo}</Text>}
-            <FlatList
-              data={Object.values(cart)}
-              renderItem={renderCartItem}
-              keyExtractor={(item) => item.ProductCode?.toString() || Math.random().toString()}
-              ListEmptyComponent={<Text style={styles.noDataText}>Cart is empty.</Text>}
-              contentContainerStyle={styles.cartList}
-            />
-            {Object.keys(cart).length > 0 && (
-              <View style={styles.cartTotal}>
-                <Text style={styles.cartTotalText}>Total: ₱{getTotal()}</Text>
-              </View>
-            )}
-            {Object.keys(cart).length > 0 && (
-              <TouchableOpacity style={[styles.modalButton, styles.clearCartButton]} onPress={clearCart} disabled={loading}>
-                <Text style={styles.modalButtonText}>Clear Cart</Text>
-              </TouchableOpacity>
-            )}
-            {Object.keys(cart).length > 0 && (
-              <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: "#F28C38", padding: 10, borderRadius: 5, marginVertical: 5, alignItems: "center" }]}
-                onPress={submitCart}
-                disabled={loading}
-              >
-                <Text style={styles.modalButtonText}>Place Order</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity style={[styles.modalButton, styles.closeCartButton]} onPress={() => setShowCartModal(false)} disabled={loading}>
-              <Text style={styles.modalButtonText}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-      <Modal
-        visible={showPendingModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => {
-          console.log("CustomerOrderScreen: Closing pending orders modal");
-          setShowPendingModal(false);
-        }}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.cartModalContainer}>
-            <Text style={styles.cartTitle}>Pending Orders</Text>
-            <Text style={styles.totalItemsText}>Total Items: {getTotalPendingItems(tableNo)}</Text>
+      ) : (
+        <>
+          <View style={styles.topNav}>
             <TouchableOpacity
-              style={[styles.modalButton, { backgroundColor: "#4CAF50", padding: 10, borderRadius: 5, marginVertical: 5, alignItems: "center" }]}
+              ref={cartIconRef}
+              style={styles.navItem}
               onPress={() => {
-                console.log("CustomerOrderScreen: Refresh orders in modal");
+                console.log("CustomerOrderScreen: Opening cart modal");
+                setShowCartModal(true);
+              }}
+              disabled={loading}
+            >
+              <Ionicons name="cart-outline" size={20} color="#3D2C29" />
+              <Text style={styles.navText}>Cart ({cart.length})</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.navItem}
+              onPress={() => {
+                console.log("CustomerOrderScreen: Opening pending orders modal");
                 fetchPendingOrders();
+                setShowPendingOrdersModal(true);
               }}
               disabled={loading}
             >
-              <Ionicons name="refresh-outline" size={20} color="#FFFFFF" />
-              <Text style={styles.modalButtonText}>Refresh Orders</Text>
-            </TouchableOpacity>
-            <FlatList
-              data={uniqueTableNos}
-              renderItem={renderTableSection}
-              keyExtractor={(item) => item.toString()}
-              ListEmptyComponent={<Text style={styles.noDataText}>No pending orders available for Table {tableNo}.</Text>}
-              contentContainerStyle={styles.cartList}
-            />
-            <TouchableOpacity
-              style={[styles.modalButton, styles.closeCartButton]}
-              onPress={() => {
-                console.log("CustomerOrderScreen: Closing modal via button");
-                setShowPendingModal(false);
-              }}
-              disabled={loading}
-            >
-              <Text style={styles.modalButtonText}>Close</Text>
+              <Ionicons name="list-outline" size={20} color="#3D2C29" />
+              <Text style={styles.navText}>Pending Orders ({getTotalPendingQuantity()})</Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </Modal>
+          {tableNo && (
+            <View style={styles.tableNoContainer}>
+              <Text style={styles.tableNoText}>Table Number: {tableNo}</Text>
+            </View>
+          )}
+          <View style={styles.searchContainer}>
+            <TextInput
+              ref={searchInputRef}
+              style={styles.searchInput}
+              placeholder="Search products..."
+              placeholderTextColor="#6B5E4A"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoCapitalize="none"
+              returnKeyType="search"
+              editable={!loading && !tableTaken}
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity
+                style={styles.clearSearchButton}
+                onPress={clearSearch}
+                disabled={loading || tableTaken}
+              >
+                <Ionicons name="close-circle" size={20} color="#6B5E4A" />
+              </TouchableOpacity>
+            )}
+          </View>
+          <View style={styles.categoryContainer}>
+            <FlatList
+              ref={categoryListRef}
+              data={categories}
+              renderItem={renderCategory}
+              keyExtractor={(item) => item.CategoryCode?.toString() || Math.random().toString()}
+              horizontal
+              contentContainerStyle={styles.categoryList}
+              showsHorizontalScrollIndicator={false}
+              ListEmptyComponent={<Text style={styles.noDataText}>No categories available.</Text>}
+              onScroll={(event) => {
+                scrollOffset.current = event.nativeEvent.contentOffset.x;
+              }}
+              onMouseDown={handleMouseDown}
+            />
+          </View>
+          {selectedCategory && (
+            <FlatList
+              data={filteredProducts}
+              renderItem={renderProduct}
+              keyExtractor={(item) => item.ProductCode?.toString() || Math.random().toString()}
+              contentContainerStyle={styles.productContainer}
+              numColumns={2}
+              ListEmptyComponent={<Text style={styles.noDataText}>No products found.</Text>}
+            />
+          )}
+          {loading && <ActivityIndicator size="large" color="#F28C38" style={styles.loading} />}
+          <Modal
+            visible={showImagePreview}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => {
+              console.log("CustomerOrderScreen: Closing image preview modal");
+              setShowImagePreview(false);
+              setPreviewImageUri(null);
+            }}
+          >
+            <View style={styles.modalContainer}>
+              <View style={styles.previewContainer}>
+                {previewImageUri && <Image source={{ uri: previewImageUri }} style={styles.previewImage} />}
+                <TouchableOpacity
+                  style={styles.modalButton}
+                  onPress={() => {
+                    console.log("CustomerOrderScreen: Closing image preview via button");
+                    setShowImagePreview(false);
+                    setPreviewImageUri(null);
+                  }}
+                >
+                  <Text style={styles.modalButtonText}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
+          <Modal
+            visible={showCartModal}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => {
+              console.log("CustomerOrderScreen: Closing cart modal");
+              setShowCartModal(false);
+            }}
+          >
+            <View style={styles.modalContainer}>
+              <View style={styles.cartModalContainer}>
+                <Text style={styles.cartTitle}>Your Cart</Text>
+                {tableNo && <Text style={styles.tableNoText}>Table Number: {tableNo}</Text>}
+                <FlatList
+                  data={cart}
+                  renderItem={renderCartItem}
+                  keyExtractor={(item) => item.id}
+                  ListEmptyComponent={<Text style={styles.noDataText}>Cart is empty.</Text>}
+                  contentContainerStyle={styles.cartList}
+                />
+                {cart.length > 0 && (
+                  <View style={styles.cartTotal}>
+                    <Text style={styles.cartTotalText}>Total: ₱{getTotal()}</Text>
+                  </View>
+                )}
+                {cart.length > 0 && (
+                  <TouchableOpacity
+                    style={[styles.modalButton, styles.clearCartButton]}
+                    onPress={clearCart}
+                    disabled={loading || tableTaken}
+                  >
+                    <Text style={styles.modalButtonText}>Clear Cart</Text>
+                  </TouchableOpacity>
+                )}
+                {cart.length > 0 && (
+                  <TouchableOpacity
+                    style={[styles.modalButton, { backgroundColor: "#F28C38", padding: 10, borderRadius: 5, marginVertical: 5, alignItems: "center" }]}
+                    onPress={submitCart}
+                    disabled={loading || tableTaken}
+                  >
+                    <Text style={styles.modalButtonText}>Place Order</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.closeCartButton]}
+                  onPress={() => {
+                    console.log("CustomerOrderScreen: Closing cart modal via button");
+                    setShowCartModal(false);
+                  }}
+                  disabled={loading}
+                >
+                  <Text style={styles.modalButtonText}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
+          <Modal
+            visible={showPendingOrdersModal}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => {
+              console.log("CustomerOrderScreen: Closing pending orders modal");
+              setShowPendingOrdersModal(false);
+            }}
+          >
+            <View style={styles.modalContainer}>
+              <View style={styles.cartModalContainer}>
+                <Text style={styles.cartTitle}>Pending and Accepted Orders</Text>
+                {tableNo && <Text style={styles.tableNoText}>Table Number: {tableNo}</Text>}
+                <TouchableOpacity
+                  style={[styles.modalButton, { backgroundColor: "#F28C38", padding: 10, borderRadius: 5, marginVertical: 5, alignItems: "center" }]}
+                  onPress={() => {
+                    console.log("CustomerOrderScreen: Refreshing pending orders");
+                    fetchPendingOrders();
+                  }}
+                  disabled={loading}
+                >
+                  <Text style={styles.modalButtonText}>Refresh Orders</Text>
+                </TouchableOpacity>
+                <Text style={[styles.cartTitle, { fontSize: 18, marginTop: 10 }]}>Pending Orders</Text>
+                <FlatList
+                  data={pendingOrders.filter((item) => item.Done === 0)}
+                  renderItem={renderPendingOrderItem}
+                  keyExtractor={(item) => item.PosDetailsCode?.toString() || Math.random().toString()}
+                  ListEmptyComponent={<Text style={styles.noDataText}>No pending orders.</Text>}
+                  contentContainerStyle={styles.cartList}
+                />
+                {pendingOrders.some((item) => item.Done === 0) && (
+                  <View style={styles.cartTotal}>
+                    <Text style={styles.cartTotalText}>Total Pending Quantity: {getTotalPendingQuantity()}</Text>
+                  </View>
+                )}
+                <Text style={[styles.cartTitle, { fontSize: 18, marginTop: 10 }]}>Accepted Orders</Text>
+                <FlatList
+                  data={pendingOrders.filter((item) => item.Done === 1)}
+                  renderItem={renderPendingOrderItem}
+                  keyExtractor={(item) => item.PosDetailsCode?.toString() || Math.random().toString()}
+                  ListEmptyComponent={<Text style={styles.noDataText}>No accepted orders.</Text>}
+                  contentContainerStyle={styles.cartList}
+                />
+                {pendingOrders.some((item) => item.Done === 1) && (
+                  <View style={styles.cartTotal}>
+                    <Text style={styles.cartTotalText}>Total Accepted Due: ₱{getTotalAcceptedDue()}</Text>
+                  </View>
+                )}
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.closeCartButton]}
+                  onPress={() => {
+                    console.log("CustomerOrderScreen: Closing pending orders modal via button");
+                    setShowPendingOrdersModal(false);
+                  }}
+                  disabled={loading}
+                >
+                  <Text style={styles.modalButtonText}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
+          {cartAnimation && (
+            <Animated.View
+              style={[
+                styles.animatedImageContainer,
+                {
+                  transform: [
+                    {
+                      translateX: animatedValue.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [cartAnimation.startX, cartAnimation.endX],
+                      }),
+                    },
+                    {
+                      translateY: animatedValue.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [cartAnimation.startY, cartAnimation.endY],
+                      }),
+                    },
+                    {
+                      scale: animatedValue.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [1, 0.3],
+                      }),
+                    },
+                  ],
+                  opacity: animatedValue.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [1, 0],
+                  }),
+                },
+              ]}
+            >
+              <Image source={{ uri: cartAnimation.product.imageUrl }} style={styles.animatedImage} />
+            </Animated.View>
+          )}
+        </>
+      )}
     </SafeAreaView>
   );
+
+  function clearCart() {
+    if (tableTaken) return;
+    console.log("CustomerOrderScreen: Clearing cart");
+    if (Platform.OS === "web") {
+      if (window.confirm("Clear all items from cart?")) {
+        setCart([]);
+        saveCartToStorage([]);
+        window.alert("Cart cleared!");
+      }
+    } else {
+      Alert.alert("Clear Cart", "Remove all items from cart?", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: () => {
+            setCart([]);
+            saveCartToStorage([]);
+            Alert.alert("Success", "Cart cleared!");
+          },
+        },
+      ]);
+    }
+  }
 };
 
 export default CustomerOrderScreen;

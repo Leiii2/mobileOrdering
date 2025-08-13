@@ -6,9 +6,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#FDF6E3",
+    flexDirection: "column", // Enforce vertical layout
+    overflow: "hidden", // Prevent horizontal scrolling
     ...Platform.select({
       web: {
-        overflowY: "auto",
+        overflowY: "auto", // Allow vertical scrolling
+        overflowX: "hidden", // Explicitly disable horizontal scrolling
         height: "100vh",
         WebkitOverflowScrolling: "touch",
       },
@@ -19,7 +22,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#E0E0E0",
+    borderBottomColor: "#E0E inches0E0",
     width: "100%",
     paddingHorizontal: 20,
     marginTop: 10,
@@ -72,6 +75,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#E0E0E0",
     alignItems: "center",
+    width: "100%", // Fit within parent
     ...Platform.select({
       ios: {
         shadowColor: "#000",
@@ -108,6 +112,7 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderWidth: 1,
     borderColor: "#E0E0E0",
+    alignSelf: "stretch", // Fit within parent
     ...Platform.select({
       ios: {
         shadowColor: "#000",
@@ -156,7 +161,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginHorizontal: 10,
     height: 100,
-    width: "100%",
+    alignSelf: "stretch", // Fit within parent
     ...Platform.select({
       ios: {
         shadowColor: "#000",
@@ -169,8 +174,8 @@ const styles = StyleSheet.create({
       },
       web: {
         boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-        overflowX: "auto",
-        overflowY: "hidden",
+        overflowX: "auto", // Allow horizontal scrolling
+        overflowY: "hidden", // Prevent vertical scrolling
         whiteSpace: "nowrap",
         display: "flex",
         flexDirection: "row",
@@ -200,10 +205,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     flexGrow: 1,
     alignItems: "center",
+    flexDirection: "row", // Enforce horizontal layout
     ...Platform.select({
       web: {
-        overflowX: "auto",
-        overflowY: "hidden",
+        overflowX: "auto", // Allow horizontal scrolling
+        overflowY: "hidden", // Prevent vertical scrolling
         display: "flex",
         flexDirection: "row",
         minWidth: "100%",
@@ -220,6 +226,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 14,
     marginRight: 10,
+    flexShrink: 0, // Prevent shrinking
     ...Platform.select({
       ios: {
         shadowColor: "#000",
@@ -284,10 +291,13 @@ const styles = StyleSheet.create({
   productContainer: {
     paddingVertical: 10,
     paddingHorizontal: 5,
-    paddingBottom: 170, // Added to ensure last product is accessible
+    paddingBottom: 170,
+    width: "100%", // Fit within parent
+    flexDirection: "column", // Enforce vertical layout
     ...Platform.select({
       web: {
-        overflowY: "auto",
+        overflowY: "auto", // Allow vertical scrolling
+        overflowX: "hidden", // Prevent horizontal scrolling
         maxHeight: "70vh",
         WebkitOverflowScrolling: "touch",
       },
@@ -377,6 +387,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginTop: 5,
+    flexWrap: "nowrap", // Prevent wrapping
   },
   quantityButton: {
     paddingVertical: 6,
@@ -442,6 +453,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderRadius: 10,
     marginBottom: 5,
+    width: "100%", // Fit within parent
     ...Platform.select({
       ios: {
         shadowColor: "#000",
@@ -483,6 +495,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginTop: 5,
+    flexWrap: "nowrap", // Prevent wrapping
   },
   cartModalContainer: {
     backgroundColor: "#FFFFFF",
@@ -503,6 +516,7 @@ const styles = StyleSheet.create({
       web: {
         boxShadow: "0 4px 8px rgba(0,0,0,0.3)",
         overflowY: "auto",
+        overflowX: "hidden", // Prevent horizontal scrolling
         WebkitOverflowScrolling: "touch",
       },
     }),
@@ -524,9 +538,11 @@ const styles = StyleSheet.create({
   },
   cartList: {
     paddingBottom: 10,
+    width: "100%", // Fit within parent
     ...Platform.select({
       web: {
         overflowY: "auto",
+        overflowX: "hidden", // Prevent horizontal scrolling
       },
     }),
   },
@@ -535,6 +551,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: "#E0E0E0",
     alignItems: "center",
+    width: "100%", // Fit within parent
   },
   cartTotalText: {
     fontSize: 16,
@@ -557,10 +574,12 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.7)",
     justifyContent: "center",
     alignItems: "center",
+    width: "100%", // Fit within parent
     ...Platform.select({
       web: {
         zIndex: 1000,
         overflowY: "auto",
+        overflowX: "hidden", // Prevent horizontal scrolling
       },
     }),
   },
@@ -613,8 +632,8 @@ const styles = StyleSheet.create({
         boxShadow: "0 2px 3px rgba(0,0,0,0.2)",
         transition: "background-color 0.2s",
         ":hover": {
-          backgroundColor: "#E07B30",
-          cursor: "pointer",
+        backgroundColor: "#E07B30",
+        cursor: "pointer",
         },
       },
     }),
@@ -673,6 +692,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFF8E7",
     borderRadius: 5,
     marginVertical: 5,
+    width: "100%", // Fit within parent
     ...Platform.select({
       ios: {
         shadowColor: "#000",
@@ -688,6 +708,10 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  pendingOrderHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
   pendingOrderText: {
     fontSize: 14,
     color: "#3D2C29",
@@ -699,14 +723,11 @@ const styles = StyleSheet.create({
       web: { fontFamily: "'Roboto', 'Arial', sans-serif" },
     }),
   },
-  // New styles for order type picker
-  orderTypeContainer: {
-    marginVertical: 10,
+  tableSection: {
     padding: 10,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: "#E0E0E0",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E0E0E0",
+    width: "100%", // Fit within parent
     ...Platform.select({
       ios: {
         shadowColor: "#000",
@@ -722,30 +743,59 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  orderTypeLabel: {
-    fontSize: 16,
-    color: "#3D2C29",
+  tableHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     marginBottom: 5,
+  },
+  tableTotalText: {
+    fontSize: 14,
+    color: "#6B5E4A",
     ...Platform.select({
       ios: { fontFamily: "System" },
       android: { fontFamily: "Roboto" },
       web: { fontFamily: "'Roboto', 'Arial', sans-serif" },
     }),
   },
-  orderTypePicker: {
-    height: 40,
-    width: "100%",
+  totalItemsText: {
+    fontSize: 14,
+    color: "#6B5E4A",
+    marginBottom: 10,
     ...Platform.select({
-      web: {
-        borderWidth: 1,
-        borderColor: "#E0E0E0",
-        borderRadius: 5,
-        transition: "border-color 0.2s",
-        ":hover": {
-          borderColor: "#F28C38",
-          cursor: "pointer",
-        },
-      },
+      ios: { fontFamily: "System" },
+      android: { fontFamily: "Roboto" },
+      web: { fontFamily: "'Roboto', 'Arial', sans-serif" },
+    }),
+  },
+  tableTakenContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+    width: "100%", // Fit within parent
+  },
+  tableTakenText: {
+    fontSize: 18,
+    color: "#FF0000",
+    textAlign: "center",
+    fontWeight: "bold",
+  },
+  statusAccepted: {
+    color: "#28A745", // Green for Accepted
+    fontSize: 14,
+  },
+  statusPending: {
+    color: "#F28C38", // Orange for Pending
+    fontSize: 14,
+  },
+  noDataText: {
+    textAlign: "center",
+    color: "#6B5E4A",
+    padding: 10,
+    ...Platform.select({
+      ios: { fontFamily: "System" },
+      android: { fontFamily: "Roboto" },
+      web: { fontFamily: "'Roboto', 'Arial', sans-serif" },
     }),
   },
 });
